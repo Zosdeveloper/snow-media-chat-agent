@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Snow Media - Sales Chat Agent</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Demo page to showcase the chat widget -->
+    <div class="demo-page">
+        <h1>The Snow Media</h1>
+        <p>Grow. Scale. Thrive.</p>
+        <p class="subtitle">Click the chat icon in the bottom right to interact with our AI Sales Agent</p>
+    </div>
+
+    <!-- Chat Widget -->
+    <div id="chat-widget" class="chat-widget">
+        <button id="chat-toggle" class="chat-toggle" aria-label="Open chat">
+            <img class="chat-icon toggle-logo" src="logo.png" alt="Chat">
+            <svg class="close-icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span class="notification-badge">1</span>
+        </button>
+
+        <div id="chat-container" class="chat-container hidden">
+            <div class="chat-header">
+                <div class="header-info">
+                    <div class="avatar">
+                        <img src="milos.jpg" alt="Milos">
+                    </div>
+                    <div class="header-text">
+                        <h3>Milos</h3>
+                        <span class="status">
+                            <span class="status-dot"></span>
+                            Online now
+                        </span>
+                    </div>
+                </div>
+                <button id="minimize-chat" class="minimize-btn" aria-label="Minimize chat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <div id="chat-messages" class="chat-messages">
+                <!-- Messages will be inserted here -->
+            </div>
+
+            <div id="quick-replies" class="quick-replies">
+                <!-- Quick reply buttons will be inserted here -->
+            </div>
+
+            <div class="chat-input-container">
+                <input
+                    type="text"
+                    id="chat-input"
+                    class="chat-input"
+                    placeholder="Type your message..."
+                    autocomplete="off"
+                >
+                <button id="send-btn" class="send-btn" aria-label="Send message">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="chat-agent.js"></script>
+</body>
+</html>

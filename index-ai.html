@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Snow Media - AI Sales Chat Agent</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .mode-indicator {
+            position: fixed;
+            bottom: 100px;
+            left: 20px;
+            background: rgba(255,255,255,0.95);
+            color: #263B80;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .mode-indicator span {
+            color: #10b981;
+            font-weight: 600;
+        }
+        .api-status {
+            margin-top: 4px;
+            font-size: 11px;
+        }
+        .api-status.connected { color: #10b981; }
+        .api-status.disconnected { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <!-- Demo page to showcase the chat widget -->
+    <div class="demo-page">
+        <h1>The Snow Media</h1>
+        <p>Grow. Scale. Thrive.</p>
+        <p class="subtitle">AI-Powered Sales Chat Agent Demo</p>
+    </div>
+
+    <div class="mode-indicator">
+        Mode: <span>AI-Powered (Claude)</span>
+        <div id="api-status" class="api-status">Checking connection...</div>
+    </div>
+
+    <!-- Chat Widget -->
+    <div id="chat-widget" class="chat-widget">
+        <button id="chat-toggle" class="chat-toggle" aria-label="Open chat">
+            <img class="chat-icon toggle-logo" src="logo.png" alt="Chat">
+            <svg class="close-icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span class="notification-badge">1</span>
+        </button>
+
+        <div id="chat-container" class="chat-container hidden">
+            <div class="chat-header">
+                <div class="header-info">
+                    <div class="avatar">
+                        <img src="milos.jpg" alt="Milos">
+                    </div>
+                    <div class="header-text">
+                        <h3>Milos</h3>
+                        <span class="status">
+                            <span class="status-dot"></span>
+                            Online now
+                        </span>
+                    </div>
+                </div>
+                <button id="minimize-chat" class="minimize-btn" aria-label="Minimize chat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <div id="chat-messages" class="chat-messages">
+                <!-- Messages will be inserted here -->
+            </div>
+
+            <div id="quick-replies" class="quick-replies">
+                <!-- Quick reply buttons will be inserted here -->
+            </div>
+
+            <div class="chat-input-container">
+                <input
+                    type="text"
+                    id="chat-input"
+                    class="chat-input"
+                    placeholder="Type your message..."
+                    autocomplete="off"
+                >
+                <button id="send-btn" class="send-btn" aria-label="Send message">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="chat-agent-ai.js"></script>
+    <script>
+        // Check API connection status
+        async function checkAPIStatus() {
+            const statusEl = document.getElementById('api-status');
+            try {
+                const response = await fetch('http://localhost:3000/api/health');
+                if (response.ok) {
+                    statusEl.textContent = '✓ Connected to AI backend';
+                    statusEl.className = 'api-status connected';
+                } else {
+                    throw new Error('Not OK');
+                }
+            } catch (e) {
+                statusEl.textContent = '✗ Backend not running - Start server first';
+                statusEl.className = 'api-status disconnected';
+            }
+        }
+        checkAPIStatus();
+
+        // Listen for lead updates
+        window.addEventListener('snowchat:leadupdate', (e) => {
+            console.log('Lead updated:', e.detail);
+        });
+
+        window.addEventListener('snowchat:leadsubmit', (e) => {
+            console.log('Lead submitted:', e.detail);
+        });
+    </script>
+</body>
+</html>
