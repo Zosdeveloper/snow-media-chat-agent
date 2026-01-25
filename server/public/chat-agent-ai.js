@@ -122,7 +122,7 @@ class SnowMediaAIChatAgent {
     async startConversation() {
         // Initial greeting from Milos
         const greeting = this.config.greeting ||
-            "Hey! I'm Milos. Are you looking to scale profitably with paid ads?";
+            "Hey, I am Milos. Just browsing, or looking to scale profitably with paid ads?";
 
         await this.simulateTyping(1200);
         this.addMessage(greeting, 'bot');
