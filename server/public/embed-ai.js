@@ -153,16 +153,17 @@
             display: flex !important;
             flex-direction: column !important;
             overflow: hidden !important;
-            animation: swchat-slideUp 0.3s ease !important;
+            opacity: 1 !important;
+            transform: translateY(0) scale(1) !important;
+            transition: opacity 0.25s ease, transform 0.25s ease !important;
         }
 
-        #snow-chat-widget .snow-container.hidden { display: none !important; }
-
-        @keyframes swchat-slideUp {
-            0% { opacity: 0; transform: translateY(30px) scale(0.9); }
-            60% { transform: translateY(-5px) scale(1.02); }
-            100% { opacity: 1; transform: translateY(0) scale(1); }
+        #snow-chat-widget .snow-container.hidden {
+            display: none !important;
+            opacity: 0 !important;
+            transform: translateY(20px) scale(0.95) !important;
         }
+
 
         #snow-chat-widget .snow-header {
             background: linear-gradient(135deg, #263B80 0%, #001468 100%) !important;
