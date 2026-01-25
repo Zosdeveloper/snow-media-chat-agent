@@ -16,6 +16,7 @@ const PORT = process.env.PORT || 3000;
 const allowedOrigins = [
     'https://thesnowmedia.com',
     'https://www.thesnowmedia.com',
+    'https://snow-media-chat-agent-production.up.railway.app',
     // Add localhost for development
     ...(process.env.NODE_ENV === 'development' ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : [])
 ];
