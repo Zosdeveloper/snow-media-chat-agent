@@ -48,7 +48,14 @@ const chatLimiter = rateLimit({
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' })); // Limit payload size
-app.use(express.static('../')); // Serve frontend files
+
+// Serve static files - use different paths for dev vs production
+const path = require('path');
+if (process.env.NODE_ENV === 'production') {
+    app.use(express.static(path.join(__dirname, 'public')));
+} else {
+    app.use(express.static(path.join(__dirname, '..')));
+}
 
 // Initialize Anthropic client
 const anthropic = new Anthropic({
