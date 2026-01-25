@@ -24,8 +24,8 @@ const allowedOrigins = [
 
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin (mobile apps, curl, etc.) in development
-        if (!origin && process.env.NODE_ENV === 'development') {
+        // Allow requests with no origin (direct access, mobile apps, curl, Postman, etc.)
+        if (!origin) {
             return callback(null, true);
         }
         if (allowedOrigins.includes(origin)) {
