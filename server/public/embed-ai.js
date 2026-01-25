@@ -461,10 +461,10 @@
                 height: 36px !important;
             }
             #snow-chat-widget .snow-container {
-                width: calc(100vw - 32px) !important;
-                height: calc(100vh - 100px) !important;
-                max-height: none !important;
-                right: -8px !important;
+                width: calc(100vw - 40px) !important;
+                height: 420px !important;
+                max-height: 60vh !important;
+                right: 0 !important;
                 bottom: 70px !important;
                 border-radius: 16px !important;
             }
