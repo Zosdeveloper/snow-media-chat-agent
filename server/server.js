@@ -5,6 +5,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
@@ -50,7 +51,6 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' })); // Limit payload size
 
 // Serve static files - use different paths for dev vs production
-const path = require('path');
 if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.join(__dirname, 'public')));
 } else {
