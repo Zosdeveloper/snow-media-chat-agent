@@ -34,55 +34,47 @@
     calendlyJS.async = true;
     document.head.appendChild(calendlyJS);
 
-    // Inject Styles
+    // Inject Styles - Using #snow-chat-widget prefix for all rules to ensure specificity
     const style = document.createElement('style');
     style.textContent = `
         #snow-chat-widget {
-            --primary-color: #263B80;
-            --primary-dark: #001468;
-            --accent-color: #FFB949;
-            --accent-dark: #EAB155;
-            --success-color: #10b981;
-            --background-light: #F0F6FB;
-            --text-primary: #263B80;
-            --text-secondary: #64748b;
-            --border-color: #d4e3f0;
-            --shadow-sm: 0 2px 4px rgba(38, 59, 128, 0.08);
-            --shadow-md: 0 6px 12px rgba(38, 59, 128, 0.12);
-            --shadow-lg: 0 12px 24px rgba(38, 59, 128, 0.15);
-            --shadow-xl: 0 24px 48px rgba(38, 59, 128, 0.18);
-            --radius-sm: 12px;
-            --radius-md: 18px;
-            --radius-lg: 24px;
-            --radius-full: 9999px;
-
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            z-index: 999999;
-            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --sw-primary: #263B80;
+            --sw-primary-dark: #001468;
+            --sw-accent: #FFB949;
+            --sw-accent-dark: #EAB155;
+            --sw-success: #10b981;
+            --sw-bg-light: #F0F6FB;
+            --sw-text-primary: #263B80;
+            --sw-text-secondary: #64748b;
+            --sw-border: #d4e3f0;
+            position: fixed !important;
+            bottom: 24px !important;
+            right: 24px !important;
+            z-index: 999999 !important;
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
         }
 
         #snow-chat-widget * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+            box-sizing: border-box !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            font-family: inherit !important;
         }
 
-        .snow-toggle {
-            width: 68px;
-            height: 68px;
-            border-radius: var(--radius-full);
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
-            border: 3px solid var(--accent-color);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: var(--shadow-lg), 0 0 0 4px rgba(255, 185, 73, 0.2);
-            transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            position: relative;
-            animation: snow-float 3s ease-in-out infinite;
+        #snow-chat-widget .snow-toggle {
+            width: 68px !important;
+            height: 68px !important;
+            border-radius: 9999px !important;
+            background: linear-gradient(135deg, #263B80 0%, #001468 100%) !important;
+            border: 3px solid #FFB949 !important;
+            cursor: pointer !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-shadow: 0 12px 24px rgba(38, 59, 128, 0.15), 0 0 0 4px rgba(255, 185, 73, 0.2) !important;
+            transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55) !important;
+            position: relative !important;
+            animation: snow-float 3s ease-in-out infinite !important;
         }
 
         @keyframes snow-float {
@@ -90,45 +82,46 @@
             50% { transform: translateY(-6px); }
         }
 
-        .snow-toggle:hover {
-            transform: scale(1.1) translateY(-2px);
-            box-shadow: var(--shadow-xl), 0 0 0 6px rgba(255, 185, 73, 0.3);
-            animation: none;
+        #snow-chat-widget .snow-toggle:hover {
+            transform: scale(1.1) translateY(-2px) !important;
+            box-shadow: 0 24px 48px rgba(38, 59, 128, 0.18), 0 0 0 6px rgba(255, 185, 73, 0.3) !important;
+            animation: none !important;
         }
 
-        .snow-toggle img {
-            width: 42px;
-            height: 42px;
-            border-radius: 50%;
-            object-fit: contain;
+        #snow-chat-widget .snow-toggle img {
+            width: 42px !important;
+            height: 42px !important;
+            border-radius: 50% !important;
+            object-fit: contain !important;
+            display: block !important;
         }
 
-        .snow-toggle svg {
-            width: 28px;
-            height: 28px;
-            color: white;
-            display: none;
+        #snow-chat-widget .snow-toggle svg {
+            width: 28px !important;
+            height: 28px !important;
+            color: white !important;
+            display: none !important;
         }
 
-        .snow-toggle.open img { display: none; }
-        .snow-toggle.open svg { display: block; }
+        #snow-chat-widget .snow-toggle.open img { display: none !important; }
+        #snow-chat-widget .snow-toggle.open svg { display: block !important; }
 
-        .snow-badge {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-dark) 100%);
-            color: var(--primary-dark);
-            font-size: 12px;
-            font-weight: 700;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 2px solid white;
-            animation: snow-bounce 2s infinite;
+        #snow-chat-widget .snow-badge {
+            position: absolute !important;
+            top: -5px !important;
+            right: -5px !important;
+            background: linear-gradient(135deg, #FFB949 0%, #EAB155 100%) !important;
+            color: #001468 !important;
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            width: 24px !important;
+            height: 24px !important;
+            border-radius: 50% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border: 2px solid white !important;
+            animation: snow-bounce 2s infinite !important;
         }
 
         @keyframes snow-bounce {
@@ -138,25 +131,25 @@
             75% { transform: scale(1.1); }
         }
 
-        .snow-badge.hidden { display: none; }
+        #snow-chat-widget .snow-badge.hidden { display: none !important; }
 
-        .snow-container {
-            position: absolute;
-            bottom: 80px;
-            right: 0;
-            width: 400px;
-            height: 500px;
-            max-height: calc(100vh - 120px);
-            background: white;
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-xl);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            animation: snow-slideUp 0.3s ease;
+        #snow-chat-widget .snow-container {
+            position: absolute !important;
+            bottom: 80px !important;
+            right: 0 !important;
+            width: 400px !important;
+            height: 500px !important;
+            max-height: calc(100vh - 120px) !important;
+            background: white !important;
+            border-radius: 24px !important;
+            box-shadow: 0 24px 48px rgba(38, 59, 128, 0.18) !important;
+            display: flex !important;
+            flex-direction: column !important;
+            overflow: hidden !important;
+            animation: snow-slideUp 0.3s ease !important;
         }
 
-        .snow-container.hidden { display: none; }
+        #snow-chat-widget .snow-container.hidden { display: none !important; }
 
         @keyframes snow-slideUp {
             0% { opacity: 0; transform: translateY(30px) scale(0.9); }
@@ -164,58 +157,61 @@
             100% { opacity: 1; transform: translateY(0) scale(1); }
         }
 
-        .snow-header {
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
-            color: white;
-            padding: 16px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+        #snow-chat-widget .snow-header {
+            background: linear-gradient(135deg, #263B80 0%, #001468 100%) !important;
+            color: white !important;
+            padding: 16px 20px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
         }
 
-        .snow-header-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
+        #snow-chat-widget .snow-header-info {
+            display: flex !important;
+            align-items: center !important;
+            gap: 12px !important;
         }
 
-        .snow-avatar {
-            width: 44px;
-            height: 44px;
-            min-width: 44px;
-            background: white;
-            border-radius: 50%;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-            border: 2px solid white;
+        #snow-chat-widget .snow-avatar {
+            width: 44px !important;
+            height: 44px !important;
+            min-width: 44px !important;
+            background: white !important;
+            border-radius: 50% !important;
+            overflow: hidden !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+            border: 2px solid white !important;
         }
 
-        .snow-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+        #snow-chat-widget .snow-avatar img {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            border-radius: 0 !important;
         }
 
-        .snow-header-text h3 {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 2px;
+        #snow-chat-widget .snow-header-text h3 {
+            font-size: 16px !important;
+            font-weight: 600 !important;
+            margin-bottom: 2px !important;
+            color: white !important;
         }
 
-        .snow-status {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            opacity: 0.9;
+        #snow-chat-widget .snow-status {
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            font-size: 12px !important;
+            opacity: 0.9 !important;
+            color: white !important;
         }
 
-        .snow-status-dot {
-            width: 8px;
-            height: 8px;
-            background: var(--success-color);
-            border-radius: 50%;
-            animation: snow-blink 2s infinite;
+        #snow-chat-widget .snow-status-dot {
+            width: 8px !important;
+            height: 8px !important;
+            background: #10b981 !important;
+            border-radius: 50% !important;
+            animation: snow-blink 2s infinite !important;
         }
 
         @keyframes snow-blink {
@@ -223,41 +219,41 @@
             50% { opacity: 0.5; }
         }
 
-        .snow-minimize {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            border-radius: var(--radius-sm);
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: background 0.2s ease;
+        #snow-chat-widget .snow-minimize {
+            background: rgba(255, 255, 255, 0.2) !important;
+            border: none !important;
+            border-radius: 12px !important;
+            width: 32px !important;
+            height: 32px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            cursor: pointer !important;
+            transition: background 0.2s ease !important;
         }
 
-        .snow-minimize:hover { background: rgba(255, 255, 255, 0.3); }
-        .snow-minimize svg { width: 18px; height: 18px; color: white; }
+        #snow-chat-widget .snow-minimize:hover { background: rgba(255, 255, 255, 0.3) !important; }
+        #snow-chat-widget .snow-minimize svg { width: 18px !important; height: 18px !important; color: white !important; }
 
-        .snow-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            background: var(--background-light);
+        #snow-chat-widget .snow-messages {
+            flex: 1 !important;
+            overflow-y: auto !important;
+            padding: 20px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 16px !important;
+            background: #F0F6FB !important;
         }
 
-        .snow-messages::-webkit-scrollbar { width: 6px; }
-        .snow-messages::-webkit-scrollbar-track { background: transparent; }
-        .snow-messages::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+        #snow-chat-widget .snow-messages::-webkit-scrollbar { width: 6px !important; }
+        #snow-chat-widget .snow-messages::-webkit-scrollbar-track { background: transparent !important; }
+        #snow-chat-widget .snow-messages::-webkit-scrollbar-thumb { background: #d4e3f0 !important; border-radius: 3px !important; }
 
-        .snow-message {
-            display: flex;
-            flex-direction: column;
-            max-width: 85%;
-            animation: snow-fadeIn 0.3s ease;
+        #snow-chat-widget .snow-message {
+            display: flex !important;
+            flex-direction: column !important;
+            max-width: 85% !important;
+            animation: snow-fadeIn 0.3s ease !important;
         }
 
         @keyframes snow-fadeIn {
@@ -266,180 +262,187 @@
             100% { opacity: 1; transform: translateY(0) scale(1); }
         }
 
-        .snow-message.bot { align-self: flex-start; }
-        .snow-message.user { align-self: flex-end; }
+        #snow-chat-widget .snow-message.bot { align-self: flex-start !important; }
+        #snow-chat-widget .snow-message.user { align-self: flex-end !important; }
 
-        .snow-message-content {
-            padding: 12px 16px;
-            border-radius: var(--radius-md);
-            font-size: 14px;
-            line-height: 1.5;
+        #snow-chat-widget .snow-message-content {
+            padding: 12px 16px !important;
+            border-radius: 18px !important;
+            font-size: 14px !important;
+            line-height: 1.5 !important;
         }
 
-        .snow-message.bot .snow-message-content {
-            background: white;
-            color: var(--text-primary);
-            border: 1px solid var(--border-color);
-            border-bottom-left-radius: 4px;
+        #snow-chat-widget .snow-message.bot .snow-message-content {
+            background: white !important;
+            color: #263B80 !important;
+            border: 1px solid #d4e3f0 !important;
+            border-bottom-left-radius: 4px !important;
         }
 
-        .snow-message.user .snow-message-content {
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
-            color: white;
-            border-bottom-right-radius: 4px;
+        #snow-chat-widget .snow-message.user .snow-message-content {
+            background: linear-gradient(135deg, #263B80 0%, #001468 100%) !important;
+            color: white !important;
+            border-bottom-right-radius: 4px !important;
+            border: none !important;
         }
 
-        .snow-message-time {
-            font-size: 11px;
-            color: var(--text-secondary);
-            margin-top: 4px;
-            padding: 0 4px;
+        #snow-chat-widget .snow-message-time {
+            font-size: 11px !important;
+            color: #64748b !important;
+            margin-top: 4px !important;
+            padding: 0 4px !important;
         }
 
-        .snow-message.user .snow-message-time { text-align: right; }
+        #snow-chat-widget .snow-message.user .snow-message-time { text-align: right !important; }
 
-        .snow-typing {
-            display: flex;
-            gap: 4px;
-            padding: 12px 16px;
-            background: white;
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-md);
-            border-bottom-left-radius: 4px;
-            width: fit-content;
+        #snow-chat-widget .snow-typing {
+            display: flex !important;
+            gap: 4px !important;
+            padding: 12px 16px !important;
+            background: white !important;
+            border: 1px solid #d4e3f0 !important;
+            border-radius: 18px !important;
+            border-bottom-left-radius: 4px !important;
+            width: fit-content !important;
         }
 
-        .snow-typing span {
-            width: 8px;
-            height: 8px;
-            background: var(--text-secondary);
-            border-radius: 50%;
-            animation: snow-typing 1.4s infinite ease-in-out;
+        #snow-chat-widget .snow-typing span {
+            width: 8px !important;
+            height: 8px !important;
+            background: #64748b !important;
+            border-radius: 50% !important;
+            animation: snow-typing 1.4s infinite ease-in-out !important;
         }
 
-        .snow-typing span:nth-child(2) { animation-delay: 0.2s; }
-        .snow-typing span:nth-child(3) { animation-delay: 0.4s; }
+        #snow-chat-widget .snow-typing span:nth-child(2) { animation-delay: 0.2s !important; }
+        #snow-chat-widget .snow-typing span:nth-child(3) { animation-delay: 0.4s !important; }
 
         @keyframes snow-typing {
             0%, 60%, 100% { transform: translateY(0); }
             30% { transform: translateY(-6px); }
         }
 
-        .snow-quick-replies {
-            padding: 12px 20px 20px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            background: var(--background-light);
-            border-bottom: 1px solid var(--border-color);
+        #snow-chat-widget .snow-quick-replies {
+            padding: 12px 20px 16px 20px !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 10px !important;
+            background: #F0F6FB !important;
         }
 
-        .snow-quick-replies:empty { display: none; }
+        #snow-chat-widget .snow-quick-replies:empty { display: none !important; }
 
-        .snow-quick-btn {
-            padding: 12px 20px;
-            background: white;
-            border: 2px solid var(--accent-color);
-            border-radius: var(--radius-full);
-            color: var(--primary-color);
-            font-family: inherit;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            box-shadow: var(--shadow-sm);
+        #snow-chat-widget .snow-quick-btn {
+            padding: 12px 20px !important;
+            background: white !important;
+            border: 2px solid #FFB949 !important;
+            border-radius: 9999px !important;
+            color: #263B80 !important;
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            transition: all 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55) !important;
+            box-shadow: 0 2px 4px rgba(38, 59, 128, 0.08) !important;
+            text-decoration: none !important;
+            display: inline-block !important;
+            line-height: 1.2 !important;
         }
 
-        .snow-quick-btn:hover {
-            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-dark) 100%);
-            color: var(--primary-dark);
-            border-color: var(--accent-dark);
-            transform: translateY(-2px) scale(1.02);
-            box-shadow: var(--shadow-md);
+        #snow-chat-widget .snow-quick-btn:hover {
+            background: linear-gradient(135deg, #FFB949 0%, #EAB155 100%) !important;
+            color: #001468 !important;
+            border-color: #EAB155 !important;
+            transform: translateY(-2px) scale(1.02) !important;
+            box-shadow: 0 6px 12px rgba(38, 59, 128, 0.12) !important;
         }
 
-        .snow-book-btn {
-            display: inline-block;
-            margin-top: 10px;
-            padding: 12px 24px;
-            background: linear-gradient(135deg, var(--success-color) 0%, #059669 100%);
-            border: none;
-            border-radius: var(--radius-full);
-            color: white;
-            font-family: inherit;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.25s ease;
-            box-shadow: var(--shadow-md);
+        #snow-chat-widget .snow-book-btn {
+            display: inline-block !important;
+            margin-top: 10px !important;
+            padding: 12px 24px !important;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+            border: none !important;
+            border-radius: 9999px !important;
+            color: white !important;
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif !important;
+            font-size: 14px !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            transition: all 0.25s ease !important;
+            box-shadow: 0 6px 12px rgba(38, 59, 128, 0.12) !important;
+            text-decoration: none !important;
         }
 
-        .snow-book-btn:hover {
-            transform: translateY(-2px) scale(1.03);
-            box-shadow: var(--shadow-lg);
+        #snow-chat-widget .snow-book-btn:hover {
+            transform: translateY(-2px) scale(1.03) !important;
+            box-shadow: 0 12px 24px rgba(38, 59, 128, 0.15) !important;
         }
 
-        .snow-input-container {
-            padding: 16px 20px;
-            background: white;
-            border-top: 1px solid var(--border-color);
-            display: flex;
-            gap: 12px;
-            align-items: center;
+        #snow-chat-widget .snow-input-container {
+            padding: 16px 20px !important;
+            background: white !important;
+            border-top: 1px solid #d4e3f0 !important;
+            display: flex !important;
+            gap: 12px !important;
+            align-items: center !important;
         }
 
-        .snow-input {
-            flex: 1;
-            padding: 12px 16px;
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-full);
-            font-family: inherit;
-            font-size: 14px;
-            outline: none;
-            transition: border-color 0.2s ease;
+        #snow-chat-widget .snow-input {
+            flex: 1 !important;
+            padding: 12px 16px !important;
+            border: 1px solid #d4e3f0 !important;
+            border-radius: 9999px !important;
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif !important;
+            font-size: 14px !important;
+            outline: none !important;
+            transition: border-color 0.2s ease !important;
+            background: white !important;
+            color: #263B80 !important;
         }
 
-        .snow-input:focus { border-color: var(--primary-color); }
-        .snow-input::placeholder { color: var(--text-secondary); }
+        #snow-chat-widget .snow-input:focus { border-color: #263B80 !important; }
+        #snow-chat-widget .snow-input::placeholder { color: #64748b !important; }
 
-        .snow-send {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-dark) 100%);
-            border: none;
-            border-radius: var(--radius-full);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            box-shadow: var(--shadow-sm);
+        #snow-chat-widget .snow-send {
+            width: 48px !important;
+            height: 48px !important;
+            min-width: 48px !important;
+            background: linear-gradient(135deg, #FFB949 0%, #EAB155 100%) !important;
+            border: none !important;
+            border-radius: 9999px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            cursor: pointer !important;
+            transition: all 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55) !important;
+            box-shadow: 0 2px 4px rgba(38, 59, 128, 0.08) !important;
         }
 
-        .snow-send:hover {
-            transform: scale(1.1) rotate(10deg);
-            box-shadow: var(--shadow-md);
+        #snow-chat-widget .snow-send:hover {
+            transform: scale(1.1) rotate(10deg) !important;
+            box-shadow: 0 6px 12px rgba(38, 59, 128, 0.12) !important;
         }
 
-        .snow-send svg {
-            width: 20px;
-            height: 20px;
-            color: var(--primary-dark);
+        #snow-chat-widget .snow-send svg {
+            width: 20px !important;
+            height: 20px !important;
+            color: #001468 !important;
         }
 
-        .snow-message-content a {
-            color: var(--accent-dark);
-            text-decoration: none;
-            font-weight: 600;
-            border-bottom: 2px solid var(--accent-color);
+        #snow-chat-widget .snow-message-content a {
+            color: #EAB155 !important;
+            text-decoration: none !important;
+            font-weight: 600 !important;
+            border-bottom: 2px solid #FFB949 !important;
         }
 
         @media (max-width: 480px) {
-            #snow-chat-widget { bottom: 16px; right: 16px; }
-            .snow-container {
-                width: calc(100vw - 32px);
-                height: calc(100vh - 120px);
-                max-height: 600px;
+            #snow-chat-widget { bottom: 16px !important; right: 16px !important; }
+            #snow-chat-widget .snow-container {
+                width: calc(100vw - 32px) !important;
+                height: calc(100vh - 120px) !important;
+                max-height: 600px !important;
             }
         }
     `;
