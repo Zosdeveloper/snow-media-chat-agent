@@ -54,11 +54,18 @@
             font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
         }
 
-        #snow-chat-widget * {
+        #snow-chat-widget,
+        #snow-chat-widget *,
+        #snow-chat-widget *::before,
+        #snow-chat-widget *::after {
             box-sizing: border-box !important;
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        }
+
+        #snow-chat-widget .snow-container *,
+        #snow-chat-widget .snow-toggle {
             margin: 0 !important;
             padding: 0 !important;
-            font-family: inherit !important;
         }
 
         #snow-chat-widget .snow-toggle {
@@ -74,10 +81,10 @@
             box-shadow: 0 12px 24px rgba(38, 59, 128, 0.15), 0 0 0 4px rgba(255, 185, 73, 0.2) !important;
             transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55) !important;
             position: relative !important;
-            animation: snow-float 3s ease-in-out infinite !important;
+            animation: swchat-float 3s ease-in-out infinite !important;
         }
 
-        @keyframes snow-float {
+        @keyframes swchat-float {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-6px); }
         }
@@ -121,10 +128,10 @@
             align-items: center !important;
             justify-content: center !important;
             border: 2px solid white !important;
-            animation: snow-bounce 2s infinite !important;
+            animation: swchat-bounce 2s infinite !important;
         }
 
-        @keyframes snow-bounce {
+        @keyframes swchat-bounce {
             0%, 100% { transform: scale(1); }
             25% { transform: scale(1.2); }
             50% { transform: scale(1); }
@@ -146,12 +153,12 @@
             display: flex !important;
             flex-direction: column !important;
             overflow: hidden !important;
-            animation: snow-slideUp 0.3s ease !important;
+            animation: swchat-slideUp 0.3s ease !important;
         }
 
         #snow-chat-widget .snow-container.hidden { display: none !important; }
 
-        @keyframes snow-slideUp {
+        @keyframes swchat-slideUp {
             0% { opacity: 0; transform: translateY(30px) scale(0.9); }
             60% { transform: translateY(-5px) scale(1.02); }
             100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -211,10 +218,10 @@
             height: 8px !important;
             background: #10b981 !important;
             border-radius: 50% !important;
-            animation: snow-blink 2s infinite !important;
+            animation: swchat-blink 2s infinite !important;
         }
 
-        @keyframes snow-blink {
+        @keyframes swchat-blink {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
@@ -253,10 +260,10 @@
             display: flex !important;
             flex-direction: column !important;
             max-width: 85% !important;
-            animation: snow-fadeIn 0.3s ease !important;
+            animation: swchat-fadeIn 0.3s ease !important;
         }
 
-        @keyframes snow-fadeIn {
+        @keyframes swchat-fadeIn {
             0% { opacity: 0; transform: translateY(15px) scale(0.95); }
             60% { transform: translateY(-3px) scale(1.01); }
             100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -437,12 +444,33 @@
             border-bottom: 2px solid #FFB949 !important;
         }
 
-        @media (max-width: 480px) {
-            #snow-chat-widget { bottom: 16px !important; right: 16px !important; }
+        @media screen and (max-width: 768px) {
+            #snow-chat-widget {
+                bottom: 16px !important;
+                right: 16px !important;
+                left: auto !important;
+                position: fixed !important;
+                z-index: 2147483647 !important;
+            }
+            #snow-chat-widget .snow-toggle {
+                width: 60px !important;
+                height: 60px !important;
+            }
+            #snow-chat-widget .snow-toggle img {
+                width: 36px !important;
+                height: 36px !important;
+            }
             #snow-chat-widget .snow-container {
                 width: calc(100vw - 32px) !important;
-                height: calc(100vh - 120px) !important;
-                max-height: 600px !important;
+                height: calc(100vh - 100px) !important;
+                max-height: none !important;
+                right: -8px !important;
+                bottom: 70px !important;
+                border-radius: 16px !important;
+            }
+            #snow-chat-widget .snow-quick-btn {
+                padding: 10px 16px !important;
+                font-size: 12px !important;
             }
         }
     `;
