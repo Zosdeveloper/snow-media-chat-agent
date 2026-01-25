@@ -1,461 +1,493 @@
 /**
  * The Snow Media - AI-Powered Embeddable Chat Widget
- * Uses Claude API for intelligent conversations
- *
- * Usage:
- * <script
- *   src="https://yourdomain.com/snow-chat/embed-ai.js"
- *   data-api-url="https://your-backend.com/api/chat"
- * ></script>
+ * Styled version matching the original design
  */
 
 (function() {
     'use strict';
 
-    // Get configuration from script tag
     const scriptTag = document.currentScript;
     const CONFIG = {
-        widgetId: 'snow-media-ai-chat',
-        apiUrl: scriptTag?.getAttribute('data-api-url') || 'http://localhost:3000/api/chat',
-        leadsUrl: scriptTag?.getAttribute('data-leads-url') || 'http://localhost:3000/api/leads',
+        apiUrl: scriptTag?.getAttribute('data-api-url') || 'https://snow-media-chat-agent-production.up.railway.app/api/chat',
+        leadsUrl: scriptTag?.getAttribute('data-leads-url') || 'https://snow-media-chat-agent-production.up.railway.app/api/leads',
         calendlyUrl: scriptTag?.getAttribute('data-calendly-url') || 'https://calendly.com/milos-thesnowmedia/30min',
         autoOpen: scriptTag?.getAttribute('data-auto-open') !== 'false',
         autoOpenDelay: parseInt(scriptTag?.getAttribute('data-delay')) || 3000,
-        primaryColor: scriptTag?.getAttribute('data-color') || '#2563eb',
-        companyName: scriptTag?.getAttribute('data-company') || 'The Snow Media'
+        milosImg: scriptTag?.getAttribute('data-avatar') || 'https://snow-media-chat-agent-production.up.railway.app/milos.jpg',
+        logoImg: scriptTag?.getAttribute('data-logo') || 'https://snow-media-chat-agent-production.up.railway.app/logo.png'
     };
 
-    // Inject CSS
-    function injectStyles() {
-        const primaryColor = CONFIG.primaryColor;
-        const primaryDark = adjustColor(primaryColor, -20);
+    // Inject Google Font
+    const fontLink = document.createElement('link');
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap';
+    fontLink.rel = 'stylesheet';
+    document.head.appendChild(fontLink);
 
-        const style = document.createElement('style');
-        style.id = 'snow-ai-chat-styles';
-        style.textContent = `
-            #${CONFIG.widgetId} {
-                --sm-primary: ${primaryColor};
-                --sm-primary-dark: ${primaryDark};
-                --sm-success: #10b981;
-                --sm-bg-light: #f8fafc;
-                --sm-text-primary: #1e293b;
-                --sm-text-secondary: #64748b;
-                --sm-border: #e2e8f0;
-                --sm-radius: 12px;
-                --sm-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    // Inject Calendly
+    const calendlyCSS = document.createElement('link');
+    calendlyCSS.href = 'https://assets.calendly.com/assets/external/widget.css';
+    calendlyCSS.rel = 'stylesheet';
+    document.head.appendChild(calendlyCSS);
 
-                position: fixed;
-                bottom: 24px;
-                right: 24px;
-                z-index: 999999;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    const calendlyJS = document.createElement('script');
+    calendlyJS.src = 'https://assets.calendly.com/assets/external/widget.js';
+    calendlyJS.async = true;
+    document.head.appendChild(calendlyJS);
+
+    // Inject Styles
+    const style = document.createElement('style');
+    style.textContent = `
+        #snow-chat-widget {
+            --primary-color: #263B80;
+            --primary-dark: #001468;
+            --accent-color: #FFB949;
+            --accent-dark: #EAB155;
+            --success-color: #10b981;
+            --background-light: #F0F6FB;
+            --text-primary: #263B80;
+            --text-secondary: #64748b;
+            --border-color: #d4e3f0;
+            --shadow-sm: 0 2px 4px rgba(38, 59, 128, 0.08);
+            --shadow-md: 0 6px 12px rgba(38, 59, 128, 0.12);
+            --shadow-lg: 0 12px 24px rgba(38, 59, 128, 0.15);
+            --shadow-xl: 0 24px 48px rgba(38, 59, 128, 0.18);
+            --radius-sm: 12px;
+            --radius-md: 18px;
+            --radius-lg: 24px;
+            --radius-full: 9999px;
+
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 999999;
+            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        #snow-chat-widget * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        .snow-toggle {
+            width: 68px;
+            height: 68px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            border: 3px solid var(--accent-color);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--shadow-lg), 0 0 0 4px rgba(255, 185, 73, 0.2);
+            transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            position: relative;
+            animation: snow-float 3s ease-in-out infinite;
+        }
+
+        @keyframes snow-float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
+        .snow-toggle:hover {
+            transform: scale(1.1) translateY(-2px);
+            box-shadow: var(--shadow-xl), 0 0 0 6px rgba(255, 185, 73, 0.3);
+            animation: none;
+        }
+
+        .snow-toggle img {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            object-fit: contain;
+        }
+
+        .snow-toggle svg {
+            width: 28px;
+            height: 28px;
+            color: white;
+            display: none;
+        }
+
+        .snow-toggle.open img { display: none; }
+        .snow-toggle.open svg { display: block; }
+
+        .snow-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-dark) 100%);
+            color: var(--primary-dark);
+            font-size: 12px;
+            font-weight: 700;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid white;
+            animation: snow-bounce 2s infinite;
+        }
+
+        @keyframes snow-bounce {
+            0%, 100% { transform: scale(1); }
+            25% { transform: scale(1.2); }
+            50% { transform: scale(1); }
+            75% { transform: scale(1.1); }
+        }
+
+        .snow-badge.hidden { display: none; }
+
+        .snow-container {
+            position: absolute;
+            bottom: 80px;
+            right: 0;
+            width: 400px;
+            height: 500px;
+            max-height: calc(100vh - 120px);
+            background: white;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-xl);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: snow-slideUp 0.3s ease;
+        }
+
+        .snow-container.hidden { display: none; }
+
+        @keyframes snow-slideUp {
+            0% { opacity: 0; transform: translateY(30px) scale(0.9); }
+            60% { transform: translateY(-5px) scale(1.02); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .snow-header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .snow-header-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .snow-avatar {
+            width: 44px;
+            height: 44px;
+            min-width: 44px;
+            background: white;
+            border-radius: 50%;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            border: 2px solid white;
+        }
+
+        .snow-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .snow-header-text h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .snow-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .snow-status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success-color);
+            border-radius: 50%;
+            animation: snow-blink 2s infinite;
+        }
+
+        @keyframes snow-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .snow-minimize {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            border-radius: var(--radius-sm);
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .snow-minimize:hover { background: rgba(255, 255, 255, 0.3); }
+        .snow-minimize svg { width: 18px; height: 18px; color: white; }
+
+        .snow-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            background: var(--background-light);
+        }
+
+        .snow-messages::-webkit-scrollbar { width: 6px; }
+        .snow-messages::-webkit-scrollbar-track { background: transparent; }
+        .snow-messages::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+
+        .snow-message {
+            display: flex;
+            flex-direction: column;
+            max-width: 85%;
+            animation: snow-fadeIn 0.3s ease;
+        }
+
+        @keyframes snow-fadeIn {
+            0% { opacity: 0; transform: translateY(15px) scale(0.95); }
+            60% { transform: translateY(-3px) scale(1.01); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .snow-message.bot { align-self: flex-start; }
+        .snow-message.user { align-self: flex-end; }
+
+        .snow-message-content {
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .snow-message.bot .snow-message-content {
+            background: white;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 4px;
+        }
+
+        .snow-message.user .snow-message-content {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .snow-message-time {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            padding: 0 4px;
+        }
+
+        .snow-message.user .snow-message-time { text-align: right; }
+
+        .snow-typing {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            border-bottom-left-radius: 4px;
+            width: fit-content;
+        }
+
+        .snow-typing span {
+            width: 8px;
+            height: 8px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            animation: snow-typing 1.4s infinite ease-in-out;
+        }
+
+        .snow-typing span:nth-child(2) { animation-delay: 0.2s; }
+        .snow-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes snow-typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-6px); }
+        }
+
+        .snow-quick-replies {
+            padding: 12px 20px 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            background: var(--background-light);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .snow-quick-replies:empty { display: none; }
+
+        .snow-quick-btn {
+            padding: 12px 20px;
+            background: white;
+            border: 2px solid var(--accent-color);
+            border-radius: var(--radius-full);
+            color: var(--primary-color);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .snow-quick-btn:hover {
+            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-dark) 100%);
+            color: var(--primary-dark);
+            border-color: var(--accent-dark);
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: var(--shadow-md);
+        }
+
+        .snow-book-btn {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, var(--success-color) 0%, #059669 100%);
+            border: none;
+            border-radius: var(--radius-full);
+            color: white;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            box-shadow: var(--shadow-md);
+        }
+
+        .snow-book-btn:hover {
+            transform: translateY(-2px) scale(1.03);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .snow-input-container {
+            padding: 16px 20px;
+            background: white;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .snow-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-full);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .snow-input:focus { border-color: var(--primary-color); }
+        .snow-input::placeholder { color: var(--text-secondary); }
+
+        .snow-send {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-dark) 100%);
+            border: none;
+            border-radius: var(--radius-full);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .snow-send:hover {
+            transform: scale(1.1) rotate(10deg);
+            box-shadow: var(--shadow-md);
+        }
+
+        .snow-send svg {
+            width: 20px;
+            height: 20px;
+            color: var(--primary-dark);
+        }
+
+        .snow-message-content a {
+            color: var(--accent-dark);
+            text-decoration: none;
+            font-weight: 600;
+            border-bottom: 2px solid var(--accent-color);
+        }
+
+        @media (max-width: 480px) {
+            #snow-chat-widget { bottom: 16px; right: 16px; }
+            .snow-container {
+                width: calc(100vw - 32px);
+                height: calc(100vh - 120px);
+                max-height: 600px;
             }
+        }
+    `;
+    document.head.appendChild(style);
 
-            #${CONFIG.widgetId} * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }
-
-            .sm-ai-toggle {
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: linear-gradient(135deg, var(--sm-primary) 0%, var(--sm-primary-dark) 100%);
-                border: none;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                box-shadow: var(--sm-shadow);
-                transition: transform 0.3s ease;
-                position: relative;
-            }
-
-            .sm-ai-toggle:hover { transform: scale(1.05); }
-            .sm-ai-toggle svg { width: 28px; height: 28px; color: white; }
-
-            .sm-ai-badge {
-                position: absolute;
-                top: -5px;
-                right: -5px;
-                background: #ef4444;
-                color: white;
-                font-size: 12px;
-                font-weight: 600;
-                width: 22px;
-                height: 22px;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border: 2px solid white;
-                animation: smPulse 2s infinite;
-            }
-
-            @keyframes smPulse {
-                0%, 100% { transform: scale(1); }
-                50% { transform: scale(1.1); }
-            }
-
-            .sm-ai-badge.hidden { display: none; }
-
-            .sm-ai-container {
-                position: absolute;
-                bottom: 80px;
-                right: 0;
-                width: 380px;
-                height: 550px;
-                background: white;
-                border-radius: var(--sm-radius);
-                box-shadow: var(--sm-shadow);
-                display: flex;
-                flex-direction: column;
-                overflow: hidden;
-                animation: smSlideUp 0.3s ease;
-            }
-
-            @keyframes smSlideUp {
-                from { opacity: 0; transform: translateY(20px) scale(0.95); }
-                to { opacity: 1; transform: translateY(0) scale(1); }
-            }
-
-            .sm-ai-container.hidden { display: none; }
-
-            .sm-ai-header {
-                background: linear-gradient(135deg, var(--sm-primary) 0%, var(--sm-primary-dark) 100%);
-                color: white;
-                padding: 16px 20px;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-            }
-
-            .sm-ai-header-info {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }
-
-            .sm-ai-avatar {
-                width: 44px;
-                height: 44px;
-                background: rgba(255, 255, 255, 0.2);
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-weight: 700;
-                font-size: 18px;
-            }
-
-            .sm-ai-header-text h3 {
-                font-size: 16px;
-                font-weight: 600;
-                margin-bottom: 2px;
-            }
-
-            .sm-ai-status {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                font-size: 12px;
-                opacity: 0.9;
-            }
-
-            .sm-ai-status-dot {
-                width: 8px;
-                height: 8px;
-                background: var(--sm-success);
-                border-radius: 50%;
-                animation: smBlink 2s infinite;
-            }
-
-            @keyframes smBlink {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.5; }
-            }
-
-            .sm-ai-minimize {
-                background: rgba(255, 255, 255, 0.2);
-                border: none;
-                border-radius: 8px;
-                width: 32px;
-                height: 32px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                transition: background 0.2s;
-            }
-
-            .sm-ai-minimize:hover { background: rgba(255, 255, 255, 0.3); }
-            .sm-ai-minimize svg { width: 18px; height: 18px; color: white; }
-
-            .sm-ai-messages {
-                flex: 1;
-                overflow-y: auto;
-                padding: 20px;
-                display: flex;
-                flex-direction: column;
-                gap: 16px;
-                background: var(--sm-bg-light);
-            }
-
-            .sm-ai-messages::-webkit-scrollbar { width: 6px; }
-            .sm-ai-messages::-webkit-scrollbar-track { background: transparent; }
-            .sm-ai-messages::-webkit-scrollbar-thumb { background: var(--sm-border); border-radius: 3px; }
-
-            .sm-ai-message {
-                display: flex;
-                flex-direction: column;
-                max-width: 85%;
-                animation: smFadeIn 0.3s ease;
-            }
-
-            @keyframes smFadeIn {
-                from { opacity: 0; transform: translateY(10px); }
-                to { opacity: 1; transform: translateY(0); }
-            }
-
-            .sm-ai-message.bot { align-self: flex-start; }
-            .sm-ai-message.user { align-self: flex-end; }
-
-            .sm-ai-message-content {
-                padding: 12px 16px;
-                border-radius: var(--sm-radius);
-                font-size: 14px;
-                line-height: 1.5;
-            }
-
-            .sm-ai-message.bot .sm-ai-message-content {
-                background: white;
-                color: var(--sm-text-primary);
-                border: 1px solid var(--sm-border);
-                border-bottom-left-radius: 4px;
-            }
-
-            .sm-ai-message.user .sm-ai-message-content {
-                background: linear-gradient(135deg, var(--sm-primary) 0%, var(--sm-primary-dark) 100%);
-                color: white;
-                border-bottom-right-radius: 4px;
-            }
-
-            .sm-ai-message-time {
-                font-size: 11px;
-                color: var(--sm-text-secondary);
-                margin-top: 4px;
-                padding: 0 4px;
-            }
-
-            .sm-ai-message.user .sm-ai-message-time { text-align: right; }
-
-            .sm-ai-typing {
-                display: flex;
-                gap: 4px;
-                padding: 12px 16px;
-                background: white;
-                border: 1px solid var(--sm-border);
-                border-radius: var(--sm-radius);
-                border-bottom-left-radius: 4px;
-                width: fit-content;
-            }
-
-            .sm-ai-typing span {
-                width: 8px;
-                height: 8px;
-                background: var(--sm-text-secondary);
-                border-radius: 50%;
-                animation: smTyping 1.4s infinite ease-in-out;
-            }
-
-            .sm-ai-typing span:nth-child(2) { animation-delay: 0.2s; }
-            .sm-ai-typing span:nth-child(3) { animation-delay: 0.4s; }
-
-            @keyframes smTyping {
-                0%, 60%, 100% { transform: translateY(0); }
-                30% { transform: translateY(-6px); }
-            }
-
-            .sm-ai-quick-replies {
-                padding: 0 20px 16px;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                background: var(--sm-bg-light);
-            }
-
-            .sm-ai-quick-replies:empty { display: none; }
-
-            .sm-ai-quick-btn {
-                padding: 10px 16px;
-                background: white;
-                border: 1px solid var(--sm-primary);
-                border-radius: 9999px;
-                color: var(--sm-primary);
-                font-size: 13px;
-                font-weight: 500;
-                cursor: pointer;
-                transition: all 0.2s ease;
-            }
-
-            .sm-ai-quick-btn:hover {
-                background: var(--sm-primary);
-                color: white;
-            }
-
-            .sm-ai-quick-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-            }
-
-            .sm-ai-book-btn {
-                display: inline-block;
-                margin-top: 10px;
-                padding: 12px 24px;
-                background: linear-gradient(135deg, var(--sm-success) 0%, #059669 100%);
-                border: none;
-                border-radius: 9999px;
-                color: white;
-                font-size: 14px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.2s ease;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            }
-
-            .sm-ai-book-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
-            }
-
-            .sm-ai-input-container {
-                padding: 16px 20px;
-                background: white;
-                border-top: 1px solid var(--sm-border);
-                display: flex;
-                gap: 12px;
-                align-items: center;
-            }
-
-            .sm-ai-input {
-                flex: 1;
-                padding: 12px 16px;
-                border: 1px solid var(--sm-border);
-                border-radius: 9999px;
-                font-size: 14px;
-                outline: none;
-                transition: border-color 0.2s;
-            }
-
-            .sm-ai-input:focus { border-color: var(--sm-primary); }
-            .sm-ai-input::placeholder { color: var(--sm-text-secondary); }
-
-            .sm-ai-send {
-                width: 44px;
-                height: 44px;
-                background: linear-gradient(135deg, var(--sm-primary) 0%, var(--sm-primary-dark) 100%);
-                border: none;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                transition: all 0.2s ease;
-            }
-
-            .sm-ai-send:hover { transform: scale(1.05); }
-            .sm-ai-send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-            .sm-ai-send svg { width: 20px; height: 20px; color: white; }
-
-            .sm-ai-message-content a {
-                color: var(--sm-primary);
-                text-decoration: underline;
-            }
-
-            .sm-ai-message.user .sm-ai-message-content a { color: white; }
-            .sm-ai-message-content strong { font-weight: 600; }
-
-            .sm-ai-powered {
-                text-align: center;
-                padding: 8px;
-                background: var(--sm-bg-light);
-                font-size: 11px;
-                color: var(--sm-text-secondary);
-            }
-
-            .sm-ai-powered a {
-                color: var(--sm-primary);
-                text-decoration: none;
-            }
-
-            @media (max-width: 480px) {
-                #${CONFIG.widgetId} {
-                    bottom: 16px;
-                    right: 16px;
-                }
-                .sm-ai-container {
-                    width: calc(100vw - 32px);
-                    height: calc(100vh - 120px);
-                    max-height: 550px;
-                }
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
-    // Helper to darken/lighten colors
-    function adjustColor(color, amount) {
-        const hex = color.replace('#', '');
-        const num = parseInt(hex, 16);
-        const r = Math.min(255, Math.max(0, (num >> 16) + amount));
-        const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + amount));
-        const b = Math.min(255, Math.max(0, (num & 0x0000FF) + amount));
-        return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
-    }
-
-    // Create widget HTML
+    // Create Widget HTML
     function createWidget() {
         const widget = document.createElement('div');
-        widget.id = CONFIG.widgetId;
+        widget.id = 'snow-chat-widget';
         widget.innerHTML = `
-            <button class="sm-ai-toggle" aria-label="Open chat">
+            <button class="snow-toggle">
+                <img src="${CONFIG.logoImg}" alt="Chat">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
                 </svg>
-                <span class="sm-ai-badge">1</span>
+                <span class="snow-badge">1</span>
             </button>
-            <div class="sm-ai-container hidden">
-                <div class="sm-ai-header">
-                    <div class="sm-ai-header-info">
-                        <div class="sm-ai-avatar">${CONFIG.companyName.charAt(0)}</div>
-                        <div class="sm-ai-header-text">
-                            <h3>${CONFIG.companyName}</h3>
-                            <span class="sm-ai-status">
-                                <span class="sm-ai-status-dot"></span>
-                                AI Assistant
+            <div class="snow-container hidden">
+                <div class="snow-header">
+                    <div class="snow-header-info">
+                        <div class="snow-avatar">
+                            <img src="${CONFIG.milosImg}" alt="Milos">
+                        </div>
+                        <div class="snow-header-text">
+                            <h3>Milos</h3>
+                            <span class="snow-status">
+                                <span class="snow-status-dot"></span>
+                                Online now
                             </span>
                         </div>
                     </div>
-                    <button class="sm-ai-minimize" aria-label="Minimize">
+                    <button class="snow-minimize">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="5" y1="12" x2="19" y2="12"></line>
                         </svg>
                     </button>
                 </div>
-                <div class="sm-ai-messages"></div>
-                <div class="sm-ai-quick-replies"></div>
-                <div class="sm-ai-input-container">
-                    <input type="text" class="sm-ai-input" placeholder="Type your message..." autocomplete="off">
-                    <button class="sm-ai-send" aria-label="Send">
+                <div class="snow-messages"></div>
+                <div class="snow-quick-replies"></div>
+                <div class="snow-input-container">
+                    <input type="text" class="snow-input" placeholder="Type your message..." autocomplete="off">
+                    <button class="snow-send">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="22" y1="2" x2="11" y2="13"></line>
                             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                         </svg>
                     </button>
-                </div>
-                <div class="sm-ai-powered">
-                    Powered by AI
                 </div>
             </div>
         `;
@@ -463,18 +495,18 @@
         return widget;
     }
 
-    // AI Chat Agent
-    class AIEmbedChatAgent {
+    // Chat Agent Class
+    class SnowChatAgent {
         constructor(widget) {
             this.widget = widget;
-            this.toggle = widget.querySelector('.sm-ai-toggle');
-            this.container = widget.querySelector('.sm-ai-container');
-            this.messages = widget.querySelector('.sm-ai-messages');
-            this.quickReplies = widget.querySelector('.sm-ai-quick-replies');
-            this.input = widget.querySelector('.sm-ai-input');
-            this.sendBtn = widget.querySelector('.sm-ai-send');
-            this.minimizeBtn = widget.querySelector('.sm-ai-minimize');
-            this.badge = widget.querySelector('.sm-ai-badge');
+            this.toggle = widget.querySelector('.snow-toggle');
+            this.container = widget.querySelector('.snow-container');
+            this.messages = widget.querySelector('.snow-messages');
+            this.quickReplies = widget.querySelector('.snow-quick-replies');
+            this.input = widget.querySelector('.snow-input');
+            this.sendBtn = widget.querySelector('.snow-send');
+            this.minimizeBtn = widget.querySelector('.snow-minimize');
+            this.badge = widget.querySelector('.snow-badge');
 
             this.isOpen = false;
             this.isTyping = false;
@@ -483,46 +515,14 @@
             this.history = [];
 
             this.bindEvents();
-            this.loadCalendly();
             if (CONFIG.autoOpen) this.autoOpen();
         }
 
-        loadCalendly() {
-            // Load Calendly CSS
-            if (!document.querySelector('link[href*="calendly.com"]')) {
-                const link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.href = 'https://assets.calendly.com/assets/external/widget.css';
-                document.head.appendChild(link);
-            }
-            // Load Calendly JS
-            if (!document.querySelector('script[src*="calendly.com"]')) {
-                const script = document.createElement('script');
-                script.src = 'https://assets.calendly.com/assets/external/widget.js';
-                script.async = true;
-                document.head.appendChild(script);
-            }
-        }
-
-        openCalendly() {
-            if (window.Calendly) {
-                Calendly.initPopupWidget({
-                    url: CONFIG.calendlyUrl,
-                    prefill: {
-                        name: this.leadData.name || '',
-                        email: this.leadData.email || ''
-                    }
-                });
-            } else {
-                window.open(CONFIG.calendlyUrl, '_blank');
-            }
-        }
-
         getSessionId() {
-            let id = sessionStorage.getItem('sm_ai_session');
+            let id = sessionStorage.getItem('snow_chat_session');
             if (!id) {
                 id = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                sessionStorage.setItem('sm_ai_session', id);
+                sessionStorage.setItem('snow_chat_session', id);
             }
             return id;
         }
@@ -548,6 +548,7 @@
         toggleChat() {
             this.isOpen = !this.isOpen;
             this.container.classList.toggle('hidden', !this.isOpen);
+            this.toggle.classList.toggle('open', this.isOpen);
             this.badge.classList.add('hidden');
 
             if (this.isOpen) {
@@ -557,38 +558,34 @@
         }
 
         async startConversation() {
-            const greeting = `Hey there! 👋 Welcome to ${CONFIG.companyName}. I'm here to help you grow your business with high-performance paid advertising. What brings you here today?`;
-
+            const greeting = "Hey, I am Milos. Just browsing, or looking to scale profitably with paid ads?";
             await this.simulateTyping(1200);
             this.addMessage(greeting, 'bot');
             this.showReplies([
-                "I need help with ads",
-                "I want to scale my business",
-                "Tell me about your services"
+                "Yes, I run an e-commerce brand",
+                "Yes, I run a home service business",
+                "Just exploring"
             ]);
         }
 
-        async handleInput() {
+        handleInput() {
             const text = this.input.value.trim();
             if (!text || this.isTyping) return;
-
             this.input.value = '';
             this.addMessage(text, 'user');
             this.clearReplies();
-
-            await this.getAIResponse(text);
+            this.getAIResponse(text);
         }
 
-        async handleReply(text) {
+        handleReply(text) {
             if (this.isTyping) return;
             this.addMessage(text, 'user');
             this.clearReplies();
-            await this.getAIResponse(text);
+            this.getAIResponse(text);
         }
 
         async getAIResponse(message) {
             this.isTyping = true;
-            this.setInputEnabled(false);
             this.showTyping();
 
             try {
@@ -602,53 +599,42 @@
                     })
                 });
 
-                if (!response.ok) throw new Error('API error');
-
                 const data = await response.json();
 
-                // Update lead data
                 if (data.leadData) {
                     this.leadData = { ...this.leadData, ...data.leadData };
                 }
 
-                // Natural typing delay
-                const delay = Math.min(800 + (data.message.length * 15), 2500);
-                await this.delay(delay);
+                const typingDelay = Math.min(1000 + (data.message.length * 20), 3000);
+                await this.delay(typingDelay);
 
                 this.hideTyping();
                 this.addMessage(data.message, 'bot');
 
-                // Show quick replies
-                if (data.quickReplies?.length) {
+                if (data.quickReplies && data.quickReplies.length > 0) {
                     this.showReplies(data.quickReplies);
                 }
 
-                // Submit lead if qualified
-                if (this.leadData.email) {
+                if (this.leadData.name && this.leadData.email && !this.leadSubmitted) {
                     this.submitLead();
                 }
 
             } catch (error) {
-                console.error('AI Error:', error);
+                console.error('Snow Chat Error:', error);
                 this.hideTyping();
-                this.addMessage(
-                    "I apologize, but I'm having a brief technical issue. Please try again or visit thesnowmedia.com to book a call directly.",
-                    'bot'
-                );
-                this.showReplies(["Try again", "Visit website"]);
+                this.addMessage("Something went wrong. Please try again or visit thesnowmedia.com", 'bot');
             }
 
             this.isTyping = false;
-            this.setInputEnabled(true);
-            this.input.focus();
         }
 
         addMessage(text, sender) {
             const div = document.createElement('div');
-            div.className = `sm-ai-message ${sender}`;
+            div.className = `snow-message ${sender}`;
+            const safeText = sender === 'bot' ? this.formatText(text) : this.escapeHtml(text);
             div.innerHTML = `
-                <div class="sm-ai-message-content">${this.formatText(text)}</div>
-                <div class="sm-ai-message-time">${this.getTime()}</div>
+                <div class="snow-message-content">${safeText}</div>
+                <div class="snow-message-time">${this.getTime()}</div>
             `;
             this.messages.appendChild(div);
             this.scrollToBottom();
@@ -656,13 +642,12 @@
         }
 
         formatText(text) {
-            // Escape HTML first to prevent XSS
-            const escaped = this.escapeHtml(text);
-            return escaped
-                .replace(/\[BOOK_CALL\]/g, '<button class="sm-ai-book-btn" onclick="window.SnowMediaAIChat.openCalendly()">📅 Book a Call</button>')
-                .replace(/(https?:\/\/[^\s&]+)/g, '<a href="$1" target="_blank">$1</a>')
-                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-                .replace(/\n/g, '<br>');
+            let escaped = this.escapeHtml(text);
+            escaped = escaped.replace(/\[BOOK_CALL\]/g, '<button class="snow-book-btn" onclick="window.SnowChat.openCalendly()">📅 Book a Call</button>');
+            escaped = escaped.replace(/(https?:\/\/[^\s&]+)/g, '<a href="$1" target="_blank">$1</a>');
+            escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            escaped = escaped.replace(/\n/g, '<br>');
+            return escaped;
         }
 
         escapeHtml(text) {
@@ -675,9 +660,8 @@
             this.quickReplies.innerHTML = '';
             replies.forEach(text => {
                 const btn = document.createElement('button');
-                btn.className = 'sm-ai-quick-btn';
+                btn.className = 'snow-quick-btn';
                 btn.textContent = text;
-                btn.disabled = this.isTyping;
                 btn.onclick = () => this.handleReply(text);
                 this.quickReplies.appendChild(btn);
             });
@@ -688,29 +672,23 @@
         }
 
         showTyping() {
-            if (document.getElementById('sm-ai-typing')) return;
+            if (document.getElementById('snow-typing')) return;
             const div = document.createElement('div');
-            div.className = 'sm-ai-message bot';
-            div.id = 'sm-ai-typing';
-            div.innerHTML = '<div class="sm-ai-typing"><span></span><span></span><span></span></div>';
+            div.className = 'snow-message bot';
+            div.id = 'snow-typing';
+            div.innerHTML = '<div class="snow-typing"><span></span><span></span><span></span></div>';
             this.messages.appendChild(div);
             this.scrollToBottom();
         }
 
         hideTyping() {
-            document.getElementById('sm-ai-typing')?.remove();
+            document.getElementById('snow-typing')?.remove();
         }
 
         async simulateTyping(ms) {
             this.showTyping();
             await this.delay(ms);
             this.hideTyping();
-        }
-
-        setInputEnabled(enabled) {
-            this.input.disabled = !enabled;
-            this.sendBtn.disabled = !enabled;
-            this.quickReplies.querySelectorAll('button').forEach(b => b.disabled = !enabled);
         }
 
         scrollToBottom() {
@@ -722,7 +700,21 @@
         }
 
         delay(ms) {
-            return new Promise(r => setTimeout(r, ms));
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        openCalendly() {
+            if (window.Calendly) {
+                Calendly.initPopupWidget({
+                    url: CONFIG.calendlyUrl,
+                    prefill: {
+                        name: this.leadData.name || '',
+                        email: this.leadData.email || ''
+                    }
+                });
+            } else {
+                window.open(CONFIG.calendlyUrl, '_blank');
+            }
         }
 
         async submitLead() {
@@ -734,11 +726,10 @@
                     body: JSON.stringify({
                         sessionId: this.sessionId,
                         leadData: this.leadData,
-                        history: this.history
+                        conversationHistory: this.history
                     })
                 });
                 this.leadSubmitted = true;
-                window.dispatchEvent(new CustomEvent('snowchat:lead', { detail: this.leadData }));
             } catch (e) {
                 console.error('Lead submit error:', e);
             }
@@ -747,10 +738,9 @@
 
     // Initialize
     function init() {
-        if (document.getElementById(CONFIG.widgetId)) return;
-        injectStyles();
+        if (document.getElementById('snow-chat-widget')) return;
         const widget = createWidget();
-        window.SnowMediaAIChat = new AIEmbedChatAgent(widget);
+        window.SnowChat = new SnowChatAgent(widget);
     }
 
     if (document.readyState === 'loading') {
