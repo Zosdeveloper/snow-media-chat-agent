@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snow Media Chat - Test Page</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #263B80 0%, #001468 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-align: center;
+        }
+        h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        p { opacity: 0.8; font-size: 1.1rem; }
+    </style>
+</head>
+<body>
+    <div>
+        <h1>The Snow Media</h1>
+        <p>Chat widget test page</p>
+        <p style="margin-top: 2rem; font-size: 0.9rem;">Chat should appear in the bottom-right corner</p>
+    </div>
+
+    <script
+        src="/embed-ai.js"
+        data-api-url="/api/chat"
+        data-leads-url="/api/leads"
+        data-calendly-url="https://calendly.com/milos-thesnowmedia/30min">
+    </script>
+</body>
+</html>
