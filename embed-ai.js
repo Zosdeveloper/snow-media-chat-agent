@@ -18,6 +18,7 @@
         widgetId: 'snow-media-ai-chat',
         apiUrl: scriptTag?.getAttribute('data-api-url') || 'http://localhost:3000/api/chat',
         leadsUrl: scriptTag?.getAttribute('data-leads-url') || 'http://localhost:3000/api/leads',
+        calendlyUrl: scriptTag?.getAttribute('data-calendly-url') || 'https://calendly.com/milos-thesnowmedia/30min',
         autoOpen: scriptTag?.getAttribute('data-auto-open') !== 'false',
         autoOpenDelay: parseInt(scriptTag?.getAttribute('data-delay')) || 3000,
         primaryColor: scriptTag?.getAttribute('data-color') || '#2563eb',
@@ -308,6 +309,26 @@
                 cursor: not-allowed;
             }
 
+            .sm-ai-book-btn {
+                display: inline-block;
+                margin-top: 10px;
+                padding: 12px 24px;
+                background: linear-gradient(135deg, var(--sm-success) 0%, #059669 100%);
+                border: none;
+                border-radius: 9999px;
+                color: white;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+
+            .sm-ai-book-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
+            }
+
             .sm-ai-input-container {
                 padding: 16px 20px;
                 background: white;
@@ -462,7 +483,39 @@
             this.history = [];
 
             this.bindEvents();
+            this.loadCalendly();
             if (CONFIG.autoOpen) this.autoOpen();
+        }
+
+        loadCalendly() {
+            // Load Calendly CSS
+            if (!document.querySelector('link[href*="calendly.com"]')) {
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = 'https://assets.calendly.com/assets/external/widget.css';
+                document.head.appendChild(link);
+            }
+            // Load Calendly JS
+            if (!document.querySelector('script[src*="calendly.com"]')) {
+                const script = document.createElement('script');
+                script.src = 'https://assets.calendly.com/assets/external/widget.js';
+                script.async = true;
+                document.head.appendChild(script);
+            }
+        }
+
+        openCalendly() {
+            if (window.Calendly) {
+                Calendly.initPopupWidget({
+                    url: CONFIG.calendlyUrl,
+                    prefill: {
+                        name: this.leadData.name || '',
+                        email: this.leadData.email || ''
+                    }
+                });
+            } else {
+                window.open(CONFIG.calendlyUrl, '_blank');
+            }
         }
 
         getSessionId() {
@@ -603,10 +656,19 @@
         }
 
         formatText(text) {
-            return text
-                .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
+            // Escape HTML first to prevent XSS
+            const escaped = this.escapeHtml(text);
+            return escaped
+                .replace(/\[BOOK_CALL\]/g, '<button class="sm-ai-book-btn" onclick="window.SnowMediaAIChat.openCalendly()">📅 Book a Call</button>')
+                .replace(/(https?:\/\/[^\s&]+)/g, '<a href="$1" target="_blank">$1</a>')
                 .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
                 .replace(/\n/g, '<br>');
+        }
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         showReplies(replies) {

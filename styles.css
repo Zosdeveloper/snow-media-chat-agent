@@ -444,6 +444,29 @@ body {
     box-shadow: var(--shadow-md);
 }
 
+/* Book Call Button (Calendly) */
+.book-call-btn {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, var(--success-color) 0%, #059669 100%);
+    border: none;
+    border-radius: var(--radius-full);
+    color: white;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    box-shadow: var(--shadow-md);
+}
+
+.book-call-btn:hover {
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: var(--shadow-lg);
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+}
+
 /* Chat Input */
 .chat-input-container {
     padding: 16px 20px;

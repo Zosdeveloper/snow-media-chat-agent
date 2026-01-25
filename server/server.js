@@ -5,15 +5,48 @@
 
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// CORS configuration - restrict to allowed domains
+const allowedOrigins = [
+    'https://thesnowmedia.com',
+    'https://www.thesnowmedia.com',
+    // Add localhost for development
+    ...(process.env.NODE_ENV === 'development' ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : [])
+];
+
+const corsOptions = {
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, curl, etc.) in development
+        if (!origin && process.env.NODE_ENV === 'development') {
+            return callback(null, true);
+        }
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true
+};
+
+// Rate limiting - prevent API abuse
+const chatLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: 20, // 20 requests per minute per IP
+    message: { error: 'Too many messages. Please wait a moment before sending more.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10kb' })); // Limit payload size
 app.use(express.static('../')); // Serve frontend files
 
 // Initialize Anthropic client
@@ -26,12 +59,13 @@ const SYSTEM_PROMPT = `You are Milos, a real human sales rep at The Snow Media. 
 
 ## YOUR PERSONALITY & VOICE
 - You sound like a real person texting, not a chatbot
-- Keep messages SHORT. 1-3 sentences max. People don't read walls of text
+- Keep messages VERY SHORT. 1-2 sentences max. Like a text message, not an email
 - Use casual phrases: "Yeah", "Totally", "I hear you", "Makes sense", "Got it"
 - NEVER use em dashes (—). Use commas, periods, or "and" instead
 - NEVER say "I understand" or "I'd be happy to help" or other robotic phrases
 - Be direct. Be warm. Don't be salesy or corporate
 - Match their energy. If they're casual, be casual. If they're professional, dial it up slightly
+- CRITICAL: Only ask ONE question per message. Never two. This keeps it conversational, not interrogative
 
 ## ABOUT THE SNOW MEDIA
 We're a growth agency that actually delivers. Senior-led team, no junior handoffs.
@@ -115,7 +149,8 @@ Common problems they have:
 **When they share contact info,** confirm it naturally and push toward booking:
 "Perfect, got it. So the next step would be hopping on a quick call with me. I'll look at your current setup and we can see if there's a fit. Does that work?"
 
-**Booking link:** https://thesnowmedia.com/book
+**To offer booking,** include this tag in your message: [BOOK_CALL]
+This will show an embedded calendar widget. Example: "Want to grab a time? [BOOK_CALL]"
 
 ## HANDLING OBJECTIONS
 
@@ -131,11 +166,21 @@ Common problems they have:
 **"Just browsing"**
 "No pressure at all. What brought you to the site today? Happy to answer any questions."
 
-## RESPONSE FORMAT
-- Keep it SHORT. Like texting a colleague
-- One question at a time
+## RESPONSE FORMAT (STRICT)
+- MAX 1-2 sentences. No exceptions. Think text message, not email
+- ONLY ONE question per message. Never ask two questions
+- Brief acknowledgment + one question. Example: "Nice! What's your biggest challenge right now?"
 - When it makes sense, offer quick reply options at the end like this:
   [QUICK_REPLIES: "Option 1", "Option 2", "Option 3"]
+
+## ACCURACY RULES (CRITICAL - prevents hallucinations)
+- ONLY cite case studies listed above. Never invent client names, metrics, or results
+- If asked about specific results we could get them, say "Results vary by business, but I can share what we've done for similar companies on a call"
+- If unsure about a service detail or capability, say "I'd need to confirm that with the team on our call"
+- Never guarantee specific outcomes like "we'll double your revenue"
+- If asked about competitors or other agencies, say "I can't really speak to what other agencies do, but I can tell you how we work"
+- If asked about something outside our services (SEO, PR, etc.), be honest: "That's not really our wheelhouse. We focus on paid ads and conversion optimization"
+- Never make up pricing, timelines, or team member names
 
 ## FIRST MESSAGE CONTEXT
 The visitor just opened the chat. They saw a welcome message and clicked to start talking. Don't repeat the greeting. Just flow naturally from wherever they're coming from.
@@ -155,13 +200,22 @@ setInterval(() => {
     }
 }, 15 * 60 * 1000); // Run every 15 minutes
 
-// Chat endpoint
-app.post('/api/chat', async (req, res) => {
+// Chat endpoint with rate limiting
+app.post('/api/chat', chatLimiter, async (req, res) => {
     try {
         const { sessionId, message, leadData } = req.body;
 
         if (!message || !sessionId) {
             return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        // Input validation
+        if (typeof message !== 'string' || message.length > 2000) {
+            return res.status(400).json({ error: 'Message too long or invalid' });
+        }
+
+        if (typeof sessionId !== 'string' || sessionId.length > 100) {
+            return res.status(400).json({ error: 'Invalid session ID' });
         }
 
         // Get or create session
@@ -212,6 +266,21 @@ app.post('/api/chat', async (req, res) => {
 
         // Extract response text
         let assistantMessage = response.content[0].text;
+
+        // Output validation - flag potentially hallucinated content
+        const suspiciousPatterns = [
+            { pattern: /\b[5-9]\d{2,}%|\b[1-9]\d{3,}%/g, reason: 'Unrealistic percentage' },
+            { pattern: /\bguarantee\b/i, reason: 'Guarantee language' },
+            { pattern: /\b100%\s+(success|guaranteed|certain)/i, reason: 'Absolute promise' },
+            { pattern: /\$\d{1,3}(?:,\d{3})*\s+(?:per|a)\s+month/i, reason: 'Specific pricing mentioned' }
+        ];
+
+        for (const { pattern, reason } of suspiciousPatterns) {
+            if (pattern.test(assistantMessage)) {
+                console.warn(`[FLAGGED RESPONSE] ${reason}:`, assistantMessage.substring(0, 200));
+                // In production, you might want to send this to a monitoring service
+            }
+        }
 
         // Parse quick replies if present
         let quickReplies = [];
@@ -271,15 +340,25 @@ function extractLeadData(message, existingData) {
         extracted.phone = phoneMatch[0];
     }
 
-    // Name detection (if message looks like just a name)
-    if (!existingData.name && message.length < 50 && !emailMatch && !phoneMatch) {
-        const nameMatch = message.match(/^(?:(?:i'?m|my name is|this is|it's|call me)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-        if (nameMatch) {
-            const potentialName = nameMatch[1];
-            // Verify it's not a common word
-            const commonWords = ['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one', 'our', 'out', 'yes', 'now', 'help', 'need', 'want', 'like', 'just', 'know', 'take', 'come', 'made', 'find', 'here', 'interested', 'looking', 'thanks', 'thank'];
-            if (!commonWords.includes(potentialName.toLowerCase())) {
-                extracted.name = potentialName;
+    // Name detection - only when explicitly introduced
+    if (!existingData.name && message.length < 100 && !emailMatch && !phoneMatch) {
+        // Require an introduction phrase - don't just grab any capitalized word
+        const namePatterns = [
+            /(?:i'?m|i am|my name is|my name's|this is|it's|call me|the name is|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+            /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+here\b/i,  // "John here"
+            /^(?:hey,?\s+)?([A-Z][a-z]+)\s+(?:speaking|from)/i  // "John speaking" or "John from XYZ"
+        ];
+
+        for (const pattern of namePatterns) {
+            const nameMatch = message.match(pattern);
+            if (nameMatch) {
+                const potentialName = nameMatch[1].trim();
+                // Verify it's not a common word
+                const commonWords = ['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one', 'our', 'out', 'yes', 'now', 'help', 'need', 'want', 'like', 'just', 'know', 'take', 'come', 'made', 'find', 'here', 'interested', 'looking', 'thanks', 'thank', 'hey', 'hello', 'hi', 'sure', 'okay', 'yeah', 'yep', 'nope', 'great', 'good', 'nice', 'cool', 'awesome', 'perfect', 'sounds', 'that', 'what', 'how', 'why', 'when', 'where', 'who'];
+                if (!commonWords.includes(potentialName.toLowerCase()) && potentialName.length >= 2) {
+                    extracted.name = potentialName;
+                    break;
+                }
             }
         }
     }

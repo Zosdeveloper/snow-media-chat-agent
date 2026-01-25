@@ -572,12 +572,20 @@
         addMessage(text, sender) {
             const div = document.createElement('div');
             div.className = `sm-message ${sender}`;
+            // Escape user input to prevent XSS, bot messages are trusted
+            const safeText = sender === 'user' ? this.escapeHtml(text) : text;
             div.innerHTML = `
-                <div class="sm-message-content">${text}</div>
+                <div class="sm-message-content">${safeText}</div>
                 <div class="sm-message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
             `;
             this.messages.appendChild(div);
             this.messages.scrollTop = this.messages.scrollHeight;
+        }
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         showReplies(replies) {

@@ -521,7 +521,8 @@ class SnowMediaChatAgent {
 
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
-        contentDiv.innerHTML = text;
+        // Escape HTML for user messages to prevent XSS, bot messages are trusted
+        contentDiv.innerHTML = sender === 'user' ? this.escapeHtml(text) : text;
 
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
@@ -534,6 +535,12 @@ class SnowMediaChatAgent {
         this.scrollToBottom();
 
         this.messageHistory.push({ text, sender, time: new Date() });
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     showQuickReplies(replies) {

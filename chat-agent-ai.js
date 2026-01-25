@@ -9,11 +9,15 @@ class SnowMediaAIChatAgent {
         this.config = {
             apiEndpoint: config.apiEndpoint || 'http://localhost:3000/api/chat',
             leadsEndpoint: config.leadsEndpoint || 'http://localhost:3000/api/leads',
+            calendlyUrl: config.calendlyUrl || 'https://calendly.com/milos-thesnowmedia/30min',
             autoOpen: config.autoOpen !== false,
             autoOpenDelay: config.autoOpenDelay || 3000,
             greeting: config.greeting || null, // Custom greeting or null for AI greeting
             ...config
         };
+
+        // Load Calendly embed script
+        this.loadCalendlyScript();
 
         // DOM Elements
         this.chatWidget = document.getElementById('chat-widget');
@@ -40,6 +44,29 @@ class SnowMediaAIChatAgent {
         this.bindEvents();
         if (this.config.autoOpen) {
             this.scheduleAutoOpen();
+        }
+    }
+
+    loadCalendlyScript() {
+        if (document.querySelector('script[src*="calendly.com"]')) return;
+        const script = document.createElement('script');
+        script.src = 'https://assets.calendly.com/assets/external/widget.js';
+        script.async = true;
+        document.head.appendChild(script);
+    }
+
+    openCalendly() {
+        if (window.Calendly) {
+            Calendly.initPopupWidget({
+                url: this.config.calendlyUrl,
+                prefill: {
+                    name: this.leadData.name || '',
+                    email: this.leadData.email || ''
+                }
+            });
+        } else {
+            // Fallback: open in new tab
+            window.open(this.config.calendlyUrl, '_blank');
         }
     }
 
@@ -223,9 +250,18 @@ class SnowMediaAIChatAgent {
     }
 
     processMessageText(text) {
-        // Convert URLs to links
-        let processed = text.replace(
-            /(https?:\/\/[^\s]+)/g,
+        // First, escape HTML to prevent XSS attacks
+        const escaped = this.escapeHtml(text);
+
+        // Convert [BOOK_CALL] to booking button
+        let processed = escaped.replace(
+            /\[BOOK_CALL\]/g,
+            '<button class="book-call-btn" onclick="window.snowMediaChat.openCalendly()">📅 Book a Call</button>'
+        );
+
+        // Convert URLs to links (on escaped text)
+        processed = processed.replace(
+            /(https?:\/\/[^\s&]+)/g,
             '<a href="$1" target="_blank" rel="noopener">$1</a>'
         );
 
@@ -236,6 +272,12 @@ class SnowMediaAIChatAgent {
         processed = processed.replace(/\n/g, '<br>');
 
         return processed;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     showQuickReplies(replies) {
