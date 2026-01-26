@@ -334,13 +334,13 @@
                 background: white;
                 border-top: 1px solid var(--sm-border);
                 display: flex;
-                gap: 12px;
                 align-items: center;
+                position: relative;
             }
 
             .sm-ai-input {
                 flex: 1;
-                padding: 12px 16px;
+                padding: 12px 52px 12px 16px;
                 border: 1px solid var(--sm-border);
                 border-radius: 9999px;
                 font-size: 14px;
@@ -352,8 +352,8 @@
             .sm-ai-input::placeholder { color: var(--sm-text-secondary); }
 
             .sm-ai-send {
-                width: 44px;
-                height: 44px;
+                width: 36px;
+                height: 36px;
                 background: linear-gradient(135deg, var(--sm-primary) 0%, var(--sm-primary-dark) 100%);
                 border: none;
                 border-radius: 50%;
@@ -362,11 +362,13 @@
                 justify-content: center;
                 cursor: pointer;
                 transition: all 0.2s ease;
+                position: absolute;
+                right: 24px;
             }
 
             .sm-ai-send:hover { transform: scale(1.05); }
             .sm-ai-send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-            .sm-ai-send svg { width: 20px; height: 20px; color: white; }
+            .sm-ai-send svg { width: 18px; height: 18px; color: white; }
 
             .sm-ai-message-content a {
                 color: var(--sm-primary);

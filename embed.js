@@ -281,13 +281,13 @@
                 background: white;
                 border-top: 1px solid var(--sm-border);
                 display: flex;
-                gap: 12px;
                 align-items: center;
+                position: relative;
             }
 
             .sm-input {
                 flex: 1;
-                padding: 12px 16px;
+                padding: 12px 52px 12px 16px;
                 border: 1px solid var(--sm-border);
                 border-radius: 9999px;
                 font-size: 14px;
@@ -297,8 +297,8 @@
             .sm-input:focus { border-color: var(--sm-primary); }
 
             .sm-send {
-                width: 44px;
-                height: 44px;
+                width: 36px;
+                height: 36px;
                 background: linear-gradient(135deg, var(--sm-primary) 0%, var(--sm-primary-dark) 100%);
                 border: none;
                 border-radius: 50%;
@@ -306,11 +306,13 @@
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
+                position: absolute;
+                right: 24px;
             }
 
             .sm-send svg {
-                width: 20px;
-                height: 20px;
+                width: 18px;
+                height: 18px;
                 color: white;
             }
 
