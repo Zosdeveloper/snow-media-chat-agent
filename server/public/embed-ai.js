@@ -12,7 +12,7 @@
         leadsUrl: scriptTag?.getAttribute('data-leads-url') || 'https://snow-media-chat-agent-production.up.railway.app/api/leads',
         calendlyUrl: scriptTag?.getAttribute('data-calendly-url') || 'https://calendly.com/milos-thesnowmedia/30min',
         autoOpen: scriptTag?.getAttribute('data-auto-open') !== 'false',
-        autoOpenDelay: parseInt(scriptTag?.getAttribute('data-delay')) || 3000,
+        autoOpenDelay: parseInt(scriptTag?.getAttribute('data-delay')) || 15000,
         milosImg: scriptTag?.getAttribute('data-avatar') || 'https://snow-media-chat-agent-production.up.railway.app/milos.jpg',
         logoImg: scriptTag?.getAttribute('data-logo') || 'https://snow-media-chat-agent-production.up.railway.app/logo.png'
     };
@@ -465,23 +465,26 @@
                 height: 36px !important;
             }
             #snow-chat-widget .snow-container {
-                width: calc(100vw - 32px) !important;
-                height: 380px !important;
-                max-height: 380px !important;
+                width: 100vw !important;
+                height: 100vh !important;
+                max-height: 100vh !important;
                 position: fixed !important;
-                bottom: 80px !important;
-                top: auto !important;
-                left: 16px !important;
-                right: 16px !important;
-                border-radius: 16px !important;
-                transition: bottom 0.15s ease !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                border-radius: 0 !important;
             }
-            #snow-chat-widget .snow-container.keyboard-open {
-                bottom: 10px !important;
+            #snow-chat-widget .snow-header {
+                padding: 16px 20px !important;
+                padding-top: max(16px, env(safe-area-inset-top)) !important;
+            }
+            #snow-chat-widget .snow-input-container {
+                padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
             }
             #snow-chat-widget .snow-quick-btn {
-                padding: 10px 16px !important;
-                font-size: 12px !important;
+                padding: 12px 18px !important;
+                font-size: 14px !important;
             }
             #snow-chat-widget .snow-input {
                 font-size: 16px !important;
@@ -583,34 +586,10 @@
                 }
             };
 
-            // Handle mobile keyboard
+            // Handle mobile keyboard - scroll to bottom when focusing input
             this.input.onfocus = () => {
-                if (window.innerWidth <= 768) {
-                    this.container.classList.add('keyboard-open');
-                    setTimeout(() => this.scrollToBottom(), 100);
-                }
+                setTimeout(() => this.scrollToBottom(), 100);
             };
-            this.input.onblur = () => {
-                if (window.innerWidth <= 768) {
-                    this.container.classList.remove('keyboard-open');
-                }
-            };
-
-            // Visual viewport resize for keyboard detection
-            if (window.visualViewport) {
-                window.visualViewport.addEventListener('resize', () => {
-                    if (window.innerWidth <= 768 && this.isOpen) {
-                        const keyboardOpen = window.visualViewport.height < window.innerHeight * 0.75;
-                        if (keyboardOpen) {
-                            const keyboardHeight = window.innerHeight - window.visualViewport.height;
-                            this.container.style.bottom = (keyboardHeight + 10) + 'px';
-                        } else {
-                            this.container.style.bottom = '';
-                            this.container.classList.remove('keyboard-open');
-                        }
-                    }
-                });
-            }
         }
 
         autoOpen() {
