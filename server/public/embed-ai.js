@@ -154,14 +154,17 @@
             flex-direction: column !important;
             overflow: hidden !important;
             opacity: 1 !important;
-            transform: translateY(0) scale(1) !important;
-            transition: opacity 0.25s ease, transform 0.25s ease !important;
+            transform: translateY(0) !important;
+            transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
         }
 
         #snow-chat-widget .snow-container.hidden {
-            display: none !important;
             opacity: 0 !important;
-            transform: translateY(20px) scale(0.95) !important;
+            transform: translateY(15px) !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
         }
 
 
