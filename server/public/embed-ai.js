@@ -372,6 +372,9 @@
                 width: 60px !important;
                 height: 60px !important;
             }
+            #snow-chat-widget .snow-toggle.open {
+                display: none !important;
+            }
             #snow-chat-widget .snow-toggle img {
                 width: 36px !important;
                 height: 36px !important;
