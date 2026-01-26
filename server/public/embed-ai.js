@@ -466,14 +466,18 @@
             }
             #snow-chat-widget .snow-container {
                 width: calc(100vw - 32px) !important;
-                height: 350px !important;
-                max-height: 350px !important;
+                height: 380px !important;
+                max-height: 380px !important;
                 position: fixed !important;
-                top: 20px !important;
-                bottom: auto !important;
+                bottom: 80px !important;
+                top: auto !important;
                 left: 16px !important;
                 right: 16px !important;
                 border-radius: 16px !important;
+                transition: bottom 0.15s ease !important;
+            }
+            #snow-chat-widget .snow-container.keyboard-open {
+                bottom: 10px !important;
             }
             #snow-chat-widget .snow-quick-btn {
                 padding: 10px 16px !important;
@@ -582,14 +586,31 @@
             // Handle mobile keyboard
             this.input.onfocus = () => {
                 if (window.innerWidth <= 768) {
-                    setTimeout(() => this.scrollToBottom(), 300);
+                    this.container.classList.add('keyboard-open');
+                    setTimeout(() => this.scrollToBottom(), 100);
                 }
             };
             this.input.onblur = () => {
                 if (window.innerWidth <= 768) {
-                    window.scrollTo(0, 0);
+                    this.container.classList.remove('keyboard-open');
                 }
             };
+
+            // Visual viewport resize for keyboard detection
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', () => {
+                    if (window.innerWidth <= 768 && this.isOpen) {
+                        const keyboardOpen = window.visualViewport.height < window.innerHeight * 0.75;
+                        if (keyboardOpen) {
+                            const keyboardHeight = window.innerHeight - window.visualViewport.height;
+                            this.container.style.bottom = (keyboardHeight + 10) + 'px';
+                        } else {
+                            this.container.style.bottom = '';
+                            this.container.classList.remove('keyboard-open');
+                        }
+                    }
+                });
+            }
         }
 
         autoOpen() {
