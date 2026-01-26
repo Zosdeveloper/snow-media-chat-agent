@@ -466,15 +466,20 @@
             }
             #snow-chat-widget .snow-container {
                 width: calc(100vw - 40px) !important;
-                height: 420px !important;
-                max-height: 60vh !important;
+                height: 400px !important;
+                max-height: 400px !important;
                 right: 0 !important;
                 bottom: 70px !important;
                 border-radius: 16px !important;
+                position: fixed !important;
+                top: auto !important;
             }
             #snow-chat-widget .snow-quick-btn {
                 padding: 10px 16px !important;
                 font-size: 12px !important;
+            }
+            #snow-chat-widget .snow-input {
+                font-size: 16px !important;
             }
         }
     `;
@@ -572,6 +577,18 @@
                     this.handleInput();
                 }
             };
+
+            // Handle mobile keyboard
+            this.input.onfocus = () => {
+                if (window.innerWidth <= 768) {
+                    setTimeout(() => this.scrollToBottom(), 300);
+                }
+            };
+            this.input.onblur = () => {
+                if (window.innerWidth <= 768) {
+                    window.scrollTo(0, 0);
+                }
+            };
         }
 
         autoOpen() {
@@ -587,7 +604,10 @@
             this.badge.classList.add('hidden');
 
             if (this.isOpen) {
-                this.input.focus();
+                // Don't auto-focus on mobile to prevent keyboard popup
+                if (window.innerWidth > 768) {
+                    this.input.focus();
+                }
                 if (!this.history.length) this.startConversation();
             }
         }
