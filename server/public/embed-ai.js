@@ -22,7 +22,6 @@
         Object.assign(el, attrs);
         document.head.appendChild(el);
     };
-
     loadResource('link', { href: 'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap', rel: 'stylesheet' });
     loadResource('link', { href: 'https://assets.calendly.com/assets/external/widget.css', rel: 'stylesheet' });
     loadResource('script', { src: 'https://assets.calendly.com/assets/external/widget.js', async: true });
@@ -30,11 +29,19 @@
     // Styles
     const style = document.createElement('style');
     style.textContent = `
+        /* Body scroll lock when chat is open on mobile */
+        body.snow-chat-open {
+            overflow: hidden !important;
+            position: fixed !important;
+            width: 100% !important;
+            height: 100% !important;
+        }
+
         #snow-chat-widget {
             position: fixed !important;
             bottom: 24px !important;
             right: 24px !important;
-            z-index: 999999 !important;
+            z-index: 2147483647 !important;
             font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
         }
         #snow-chat-widget *, #snow-chat-widget *::before, #snow-chat-widget *::after {
@@ -46,7 +53,7 @@
             padding: 0 !important;
         }
 
-        /* Toggle Button */
+        /* Toggle Button - Always on top */
         #snow-chat-widget .snow-toggle {
             width: 68px !important;
             height: 68px !important;
@@ -59,7 +66,10 @@
             justify-content: center !important;
             box-shadow: 0 12px 24px rgba(38,59,128,0.15), 0 0 0 4px rgba(255,185,73,0.2) !important;
             position: relative !important;
+            z-index: 2147483647 !important;
             animation: swchat-float 3s ease-in-out infinite !important;
+            -webkit-tap-highlight-color: transparent !important;
+            touch-action: manipulation !important;
         }
         @keyframes swchat-float {
             0%, 100% { transform: translateY(0); }
@@ -69,17 +79,22 @@
             transform: scale(1.1) !important;
             animation: none !important;
         }
+        #snow-chat-widget .snow-toggle:active {
+            transform: scale(0.95) !important;
+        }
         #snow-chat-widget .snow-toggle img {
             width: 42px !important;
             height: 42px !important;
             border-radius: 50% !important;
             object-fit: contain !important;
+            pointer-events: none !important;
         }
         #snow-chat-widget .snow-toggle svg {
             width: 28px !important;
             height: 28px !important;
             color: white !important;
             display: none !important;
+            pointer-events: none !important;
         }
         #snow-chat-widget .snow-toggle.open img { display: none !important; }
         #snow-chat-widget .snow-toggle.open svg { display: block !important; }
@@ -100,10 +115,11 @@
             align-items: center !important;
             justify-content: center !important;
             border: 2px solid white !important;
+            pointer-events: none !important;
         }
         #snow-chat-widget .snow-badge.hidden { display: none !important; }
 
-        /* Container */
+        /* Container - Desktop */
         #snow-chat-widget .snow-container {
             position: absolute !important;
             bottom: 80px !important;
@@ -114,19 +130,12 @@
             background: white !important;
             border-radius: 24px !important;
             box-shadow: 0 24px 48px rgba(38,59,128,0.18) !important;
-            display: flex !important;
+            display: none !important;
             flex-direction: column !important;
             overflow: hidden !important;
-            opacity: 1 !important;
-            transform: translateY(0) !important;
-            transition: opacity 0.2s, transform 0.2s, visibility 0.2s !important;
-            visibility: visible !important;
         }
-        #snow-chat-widget .snow-container.hidden {
-            opacity: 0 !important;
-            transform: translateY(15px) !important;
-            visibility: hidden !important;
-            pointer-events: none !important;
+        #snow-chat-widget .snow-container.open {
+            display: flex !important;
         }
 
         /* Header */
@@ -137,6 +146,7 @@
             display: flex !important;
             align-items: center !important;
             justify-content: space-between !important;
+            flex-shrink: 0 !important;
         }
         #snow-chat-widget .snow-header-info {
             display: flex !important;
@@ -150,6 +160,7 @@
             border-radius: 50% !important;
             overflow: hidden !important;
             border: 2px solid white !important;
+            flex-shrink: 0 !important;
         }
         #snow-chat-widget .snow-avatar img {
             width: 100% !important;
@@ -179,25 +190,30 @@
             background: rgba(255,255,255,0.2) !important;
             border: none !important;
             border-radius: 12px !important;
-            width: 32px !important;
-            height: 32px !important;
+            width: 36px !important;
+            height: 36px !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             cursor: pointer !important;
+            -webkit-tap-highlight-color: transparent !important;
+            touch-action: manipulation !important;
         }
         #snow-chat-widget .snow-minimize:hover { background: rgba(255,255,255,0.3) !important; }
-        #snow-chat-widget .snow-minimize svg { width: 18px !important; height: 18px !important; color: white !important; }
+        #snow-chat-widget .snow-minimize svg { width: 20px !important; height: 20px !important; color: white !important; pointer-events: none !important; }
 
         /* Messages */
         #snow-chat-widget .snow-messages {
             flex: 1 !important;
             overflow-y: auto !important;
+            overflow-x: hidden !important;
             padding: 20px !important;
             display: flex !important;
             flex-direction: column !important;
             gap: 16px !important;
             background: #F0F6FB !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
         }
         #snow-chat-widget .snow-message {
             display: flex !important;
@@ -211,6 +227,7 @@
             border-radius: 18px !important;
             font-size: 14px !important;
             line-height: 1.5 !important;
+            word-wrap: break-word !important;
         }
         #snow-chat-widget .snow-message.bot .snow-message-content {
             background: white !important;
@@ -267,6 +284,7 @@
             flex-wrap: wrap !important;
             gap: 10px !important;
             background: #F0F6FB !important;
+            flex-shrink: 0 !important;
         }
         #snow-chat-widget .snow-quick-replies:empty { display: none !important; }
         #snow-chat-widget .snow-quick-btn {
@@ -278,9 +296,10 @@
             font-size: 13px !important;
             font-weight: 600 !important;
             cursor: pointer !important;
-            transition: all 0.2s !important;
+            -webkit-tap-highlight-color: transparent !important;
+            touch-action: manipulation !important;
         }
-        #snow-chat-widget .snow-quick-btn:hover {
+        #snow-chat-widget .snow-quick-btn:active {
             background: linear-gradient(135deg, #FFB949, #EAB155) !important;
             color: #001468 !important;
         }
@@ -297,6 +316,7 @@
             font-size: 14px !important;
             font-weight: 600 !important;
             cursor: pointer !important;
+            -webkit-tap-highlight-color: transparent !important;
         }
 
         /* Input */
@@ -307,22 +327,26 @@
             display: flex !important;
             gap: 12px !important;
             align-items: center !important;
+            flex-shrink: 0 !important;
         }
         #snow-chat-widget .snow-input {
             flex: 1 !important;
             padding: 12px 16px !important;
             border: 1px solid #d4e3f0 !important;
             border-radius: 9999px !important;
-            font-size: 14px !important;
+            font-size: 16px !important;
             outline: none !important;
             background: white !important;
             color: #263B80 !important;
+            -webkit-appearance: none !important;
+            appearance: none !important;
         }
         #snow-chat-widget .snow-input:focus { border-color: #263B80 !important; }
         #snow-chat-widget .snow-input::placeholder { color: #64748b !important; }
         #snow-chat-widget .snow-send {
             width: 48px !important;
             height: 48px !important;
+            min-width: 48px !important;
             background: linear-gradient(135deg, #FFB949, #EAB155) !important;
             border: none !important;
             border-radius: 50% !important;
@@ -330,29 +354,47 @@
             align-items: center !important;
             justify-content: center !important;
             cursor: pointer !important;
+            -webkit-tap-highlight-color: transparent !important;
+            touch-action: manipulation !important;
         }
-        #snow-chat-widget .snow-send:hover { transform: scale(1.1) !important; }
-        #snow-chat-widget .snow-send svg { width: 20px !important; height: 20px !important; color: #001468 !important; }
+        #snow-chat-widget .snow-send:active { transform: scale(0.95) !important; }
+        #snow-chat-widget .snow-send svg { width: 20px !important; height: 20px !important; color: #001468 !important; pointer-events: none !important; }
 
         /* Mobile - Full Screen */
         @media (max-width: 768px) {
-            #snow-chat-widget { bottom: 16px !important; right: 16px !important; z-index: 2147483647 !important; }
-            #snow-chat-widget .snow-toggle { width: 60px !important; height: 60px !important; }
-            #snow-chat-widget .snow-toggle img { width: 36px !important; height: 36px !important; }
+            #snow-chat-widget {
+                bottom: 16px !important;
+                right: 16px !important;
+            }
+            #snow-chat-widget .snow-toggle {
+                width: 60px !important;
+                height: 60px !important;
+            }
+            #snow-chat-widget .snow-toggle img {
+                width: 36px !important;
+                height: 36px !important;
+            }
             #snow-chat-widget .snow-container {
                 position: fixed !important;
                 top: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
                 bottom: 0 !important;
-                width: 100vw !important;
-                height: 100vh !important;
-                max-height: 100vh !important;
+                width: 100% !important;
+                height: 100% !important;
+                max-height: none !important;
                 border-radius: 0 !important;
+                z-index: 2147483646 !important;
             }
-            #snow-chat-widget .snow-header { padding-top: max(16px, env(safe-area-inset-top)) !important; }
-            #snow-chat-widget .snow-input-container { padding-bottom: max(16px, env(safe-area-inset-bottom)) !important; }
-            #snow-chat-widget .snow-input { font-size: 16px !important; }
+            #snow-chat-widget .snow-header {
+                padding-top: max(16px, env(safe-area-inset-top)) !important;
+            }
+            #snow-chat-widget .snow-input-container {
+                padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
+            }
+            #snow-chat-widget .snow-messages {
+                padding-bottom: 10px !important;
+            }
         }
     `;
     document.head.appendChild(style);
@@ -362,7 +404,7 @@
         const widget = document.createElement('div');
         widget.id = 'snow-chat-widget';
         widget.innerHTML = `
-            <button class="snow-toggle">
+            <button class="snow-toggle" type="button" aria-label="Open chat">
                 <img src="${CONFIG.logoImg}" alt="Chat">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -370,7 +412,7 @@
                 </svg>
                 <span class="snow-badge">1</span>
             </button>
-            <div class="snow-container hidden">
+            <div class="snow-container">
                 <div class="snow-header">
                     <div class="snow-header-info">
                         <div class="snow-avatar"><img src="${CONFIG.avatarImg}" alt="Milos"></div>
@@ -379,7 +421,7 @@
                             <span class="snow-status"><span class="snow-status-dot"></span>Online now</span>
                         </div>
                     </div>
-                    <button class="snow-minimize">
+                    <button class="snow-minimize" type="button" aria-label="Close chat">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -390,7 +432,7 @@
                 <div class="snow-quick-replies"></div>
                 <div class="snow-input-container">
                     <input type="text" class="snow-input" placeholder="Type your message..." autocomplete="off">
-                    <button class="snow-send">
+                    <button class="snow-send" type="button" aria-label="Send message">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="22" y1="2" x2="11" y2="13"></line>
                             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
@@ -418,9 +460,13 @@
 
             this.isOpen = false;
             this.isTyping = false;
+            this.isMobile = window.innerWidth <= 768;
+            this.scrollY = 0;
+
             this.sessionId = sessionStorage.getItem('snow_chat_session') ||
                 ('sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
             sessionStorage.setItem('snow_chat_session', this.sessionId);
+
             this.leadData = {};
             this.history = [];
             this.leadSubmitted = false;
@@ -430,21 +476,79 @@
         }
 
         bindEvents() {
-            this.toggle.onclick = () => this.toggleChat();
-            this.minimizeBtn.onclick = () => this.toggleChat();
-            this.sendBtn.onclick = () => this.handleInput();
-            this.input.onkeypress = (e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), this.handleInput());
-            this.input.onfocus = () => setTimeout(() => this.scrollToBottom(), 100);
+            // Toggle button
+            this.toggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleChat();
+            });
+
+            // Close button
+            this.minimizeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleChat();
+            });
+
+            // Send button
+            this.sendBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.handleInput();
+            });
+
+            // Input enter key
+            this.input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.handleInput();
+                }
+            });
+
+            // Prevent body scroll when touching messages area
+            this.container.addEventListener('touchmove', (e) => {
+                e.stopPropagation();
+            }, { passive: true });
+
+            // Update mobile state on resize
+            window.addEventListener('resize', () => {
+                this.isMobile = window.innerWidth <= 768;
+            });
         }
 
         toggleChat() {
             this.isOpen = !this.isOpen;
-            this.container.classList.toggle('hidden', !this.isOpen);
-            this.toggle.classList.toggle('open', this.isOpen);
-            this.badge.classList.add('hidden');
+
             if (this.isOpen) {
-                if (window.innerWidth > 768) this.input.focus();
-                if (!this.history.length) this.startConversation();
+                // Open chat
+                this.container.classList.add('open');
+                this.toggle.classList.add('open');
+                this.badge.classList.add('hidden');
+
+                // Lock body scroll on mobile
+                if (this.isMobile) {
+                    this.scrollY = window.scrollY;
+                    document.body.classList.add('snow-chat-open');
+                    document.body.style.top = `-${this.scrollY}px`;
+                }
+
+                // Start conversation if first time
+                if (!this.history.length) {
+                    this.startConversation();
+                }
+            } else {
+                // Close chat
+                this.container.classList.remove('open');
+                this.toggle.classList.remove('open');
+
+                // Unlock body scroll on mobile
+                if (this.isMobile) {
+                    document.body.classList.remove('snow-chat-open');
+                    document.body.style.top = '';
+                    window.scrollTo(0, this.scrollY);
+                }
+
+                // Blur input to close keyboard
+                this.input.blur();
             }
         }
 
@@ -523,10 +627,15 @@
             replies.forEach(text => {
                 const btn = document.createElement('button');
                 btn.className = 'snow-quick-btn';
+                btn.type = 'button';
                 btn.textContent = text;
-                btn.onclick = () => this.handleReply(text);
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.handleReply(text);
+                });
                 this.quickReplies.appendChild(btn);
             });
+            this.scrollToBottom();
         }
 
         clearReplies() { this.quickReplies.innerHTML = ''; }
@@ -549,7 +658,12 @@
             this.hideTyping();
         }
 
-        scrollToBottom() { this.messages.scrollTop = this.messages.scrollHeight; }
+        scrollToBottom() {
+            requestAnimationFrame(() => {
+                this.messages.scrollTop = this.messages.scrollHeight;
+            });
+        }
+
         delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
         openCalendly() {
