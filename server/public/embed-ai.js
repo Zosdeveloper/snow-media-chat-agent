@@ -325,13 +325,13 @@
             background: white !important;
             border-top: 1px solid #d4e3f0 !important;
             display: flex !important;
-            gap: 12px !important;
             align-items: center !important;
             flex-shrink: 0 !important;
+            position: relative !important;
         }
         #snow-chat-widget .snow-input {
             flex: 1 !important;
-            padding: 12px 16px !important;
+            padding: 12px 56px 12px 16px !important;
             border: 1px solid #d4e3f0 !important;
             border-radius: 9999px !important;
             font-size: 16px !important;
@@ -344,9 +344,9 @@
         #snow-chat-widget .snow-input:focus { border-color: #263B80 !important; }
         #snow-chat-widget .snow-input::placeholder { color: #64748b !important; }
         #snow-chat-widget .snow-send {
-            width: 48px !important;
-            height: 48px !important;
-            min-width: 48px !important;
+            width: 40px !important;
+            height: 40px !important;
+            min-width: 40px !important;
             background: linear-gradient(135deg, #FFB949, #EAB155) !important;
             border: none !important;
             border-radius: 50% !important;
@@ -356,9 +356,11 @@
             cursor: pointer !important;
             -webkit-tap-highlight-color: transparent !important;
             touch-action: manipulation !important;
+            position: absolute !important;
+            right: 24px !important;
         }
         #snow-chat-widget .snow-send:active { transform: scale(0.95) !important; }
-        #snow-chat-widget .snow-send svg { width: 20px !important; height: 20px !important; color: #001468 !important; pointer-events: none !important; }
+        #snow-chat-widget .snow-send svg { width: 18px !important; height: 18px !important; color: #001468 !important; pointer-events: none !important; }
 
         /* Mobile - Full Screen */
         @media (max-width: 768px) {
