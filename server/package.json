@@ -9,10 +9,12 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
+    "better-sqlite3": "^11.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.1.5"
+    "express-rate-limit": "^7.1.5",
+    "sqlite-vec": "^0.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

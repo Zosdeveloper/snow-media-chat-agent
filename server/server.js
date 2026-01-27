@@ -1,6 +1,7 @@
 /**
  * The Snow Media - AI Chat Backend Server
  * Handles AI-powered responses using Claude API
+ * With RAG-based context retrieval and few-shot learning
  */
 
 const express = require('express');
@@ -9,6 +10,15 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
+
+// Import database and services
+const db = require('./database/db');
+const ragService = require('./services/ragService');
+const embeddingService = require('./services/embeddingService');
+const autoTagger = require('./services/autoTagger');
+const promptBuilder = require('./services/promptBuilder');
+const adminRoutes = require('./routes/admin');
+const config = require('./config');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -200,13 +210,19 @@ const sessions = new Map();
 
 // Session cleanup (remove sessions older than 1 hour)
 setInterval(() => {
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const oneHourAgo = Date.now() - config.session.maxAge;
     for (const [sessionId, session] of sessions) {
         if (session.lastActivity < oneHourAgo) {
+            // Mark abandoned sessions in database before deleting
+            try {
+                db.markAbandoned(sessionId);
+            } catch (err) {
+                console.error('Error marking session abandoned:', err.message);
+            }
             sessions.delete(sessionId);
         }
     }
-}, 15 * 60 * 1000); // Run every 15 minutes
+}, config.session.cleanupInterval); // Run every 15 minutes
 
 // Chat endpoint with rate limiting
 app.post('/api/chat', chatLimiter, async (req, res) => {
@@ -241,16 +257,48 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         session.lastActivity = Date.now();
         session.leadData = { ...session.leadData, ...leadData };
 
+        // Persist to database (fire and forget)
+        try {
+            db.upsertConversation(sessionId, {
+                source_url: req.headers.referer,
+                lead_name: session.leadData.name,
+                lead_email: session.leadData.email,
+                lead_phone: session.leadData.phone,
+                lead_business_type: session.leadData.businessType || session.leadData.business
+            });
+        } catch (err) {
+            console.error('Error persisting conversation:', err.message);
+        }
+
         // Add user message to history
         session.messages.push({
             role: 'user',
             content: message
         });
 
+        // Persist user message (fire and forget)
+        try {
+            db.addMessage(sessionId, 'user', message);
+        } catch (err) {
+            console.error('Error persisting user message:', err.message);
+        }
+
         // Build context message with lead data
         let contextMessage = '';
         if (Object.keys(session.leadData).length > 0) {
-            contextMessage = `\n\n[LEAD DATA COLLECTED SO FAR: ${JSON.stringify(session.leadData)}]`;
+            contextMessage = promptBuilder.buildLeadContext(session.leadData);
+        }
+
+        // Add conversation stage guidance
+        contextMessage += promptBuilder.getStageGuidance(session);
+
+        // Get relevant patterns and inject as few-shot examples
+        let enrichedPrompt = SYSTEM_PROMPT;
+        try {
+            const ragContext = await ragService.getRelevantContext(session, message);
+            enrichedPrompt = promptBuilder.build(SYSTEM_PROMPT, ragContext);
+        } catch (err) {
+            console.error('Error getting RAG context:', err.message);
         }
 
         // Prepare messages for Claude
@@ -264,11 +312,11 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             return msg;
         });
 
-        // Call Claude API
+        // Call Claude API with enriched prompt
         const response = await anthropic.messages.create({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 500,
-            system: SYSTEM_PROMPT,
+            system: enrichedPrompt,
             messages: messagesForClaude
         });
 
@@ -302,6 +350,12 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         const extractedData = extractLeadData(message, session.leadData);
         if (Object.keys(extractedData).length > 0) {
             session.leadData = { ...session.leadData, ...extractedData };
+            // Update lead data in database
+            try {
+                db.updateConversationLeadData(sessionId, session.leadData);
+            } catch (err) {
+                console.error('Error updating lead data:', err.message);
+            }
         }
 
         // Add assistant message to history
@@ -310,9 +364,23 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             content: assistantMessage
         });
 
+        // Persist assistant message (fire and forget)
+        try {
+            db.addMessage(sessionId, 'assistant', assistantMessage, null, quickReplies.length > 0 ? quickReplies : null);
+        } catch (err) {
+            console.error('Error persisting assistant message:', err.message);
+        }
+
+        // Check for auto-tagging after enough messages (background)
+        if (session.messages.length >= config.autoTag.minMessageCount) {
+            autoTagger.checkForPatterns(sessionId, session).catch(err => {
+                console.error('Auto-tagging error:', err.message);
+            });
+        }
+
         // Keep conversation history manageable (last 20 messages)
-        if (session.messages.length > 20) {
-            session.messages = session.messages.slice(-20);
+        if (session.messages.length > config.session.maxMessages) {
+            session.messages = session.messages.slice(-config.session.maxMessages);
         }
 
         res.json({
@@ -415,13 +483,64 @@ app.get('/api/session/:sessionId', (req, res) => {
 
 // Health check
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    const health = {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        vectorSearch: db.isVectorSearchEnabled()
+    };
+
+    try {
+        const stats = db.getStats();
+        health.conversations = stats.conversations.total;
+        health.patterns = stats.patterns.total;
+    } catch (err) {
+        health.database = 'error';
+    }
+
+    res.json(health);
 });
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`The Snow Media AI Chat Server running on port ${PORT}`);
-    console.log(`Open http://localhost:${PORT} to test the chat`);
+// Admin routes
+app.use('/api/admin', adminRoutes);
+
+// Start server with database initialization
+async function startServer() {
+    try {
+        // Initialize database
+        await db.initialize();
+        console.log('Database initialized successfully');
+
+        // Check if embedding service is available
+        if (embeddingService.isAvailable()) {
+            console.log('Voyage AI embedding service configured');
+        } else {
+            console.log('Warning: VOYAGE_API_KEY not set, RAG features disabled');
+        }
+
+        // Start listening
+        app.listen(PORT, () => {
+            console.log(`The Snow Media AI Chat Server running on port ${PORT}`);
+            console.log(`Open http://localhost:${PORT} to test the chat`);
+        });
+    } catch (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', () => {
+    console.log('\nShutting down gracefully...');
+    db.close();
+    process.exit(0);
 });
+
+process.on('SIGTERM', () => {
+    console.log('\nShutting down gracefully...');
+    db.close();
+    process.exit(0);
+});
+
+startServer();
 
 module.exports = app;
