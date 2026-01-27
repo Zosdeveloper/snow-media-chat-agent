@@ -335,6 +335,7 @@
             border: 1px solid #d4e3f0 !important;
             border-radius: 9999px !important;
             font-size: 16px !important;
+            font-weight: 500 !important;
             outline: none !important;
             background: white !important;
             color: #263B80 !important;
@@ -400,6 +401,14 @@
             #snow-chat-widget .snow-messages {
                 padding-bottom: 10px !important;
             }
+        }
+
+        /* Ensure Calendly popup appears above chat widget */
+        .calendly-overlay {
+            z-index: 2147483648 !important;
+        }
+        .calendly-popup {
+            z-index: 2147483648 !important;
         }
     `;
     document.head.appendChild(style);
@@ -472,12 +481,54 @@
                 ('sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
             sessionStorage.setItem('snow_chat_session', this.sessionId);
 
-            this.leadData = {};
-            this.history = [];
+            this.leadData = this.loadLeadData();
+            this.history = this.loadHistory();
             this.leadSubmitted = false;
+            this.historyRestored = false;
 
             this.bindEvents();
-            if (CONFIG.autoOpen) setTimeout(() => !this.isOpen && this.toggleChat(), CONFIG.autoOpenDelay);
+            // Only auto-open if user hasn't manually closed before
+            if (CONFIG.autoOpen && localStorage.getItem('sm_chat_closed') !== 'true') {
+                setTimeout(() => {
+                    if (!this.isOpen && localStorage.getItem('sm_chat_closed') !== 'true') {
+                        this.toggleChat();
+                    }
+                }, CONFIG.autoOpenDelay);
+            }
+        }
+
+        loadHistory() {
+            try {
+                const saved = localStorage.getItem('sm_chat_history');
+                return saved ? JSON.parse(saved) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        saveHistory() {
+            try {
+                localStorage.setItem('sm_chat_history', JSON.stringify(this.history));
+            } catch (e) {
+                console.error('Failed to save chat history:', e);
+            }
+        }
+
+        loadLeadData() {
+            try {
+                const saved = localStorage.getItem('sm_lead_data');
+                return saved ? JSON.parse(saved) : {};
+            } catch (e) {
+                return {};
+            }
+        }
+
+        saveLeadData() {
+            try {
+                localStorage.setItem('sm_lead_data', JSON.stringify(this.leadData));
+            } catch (e) {
+                console.error('Failed to save lead data:', e);
+            }
         }
 
         bindEvents() {
@@ -536,14 +587,19 @@
                     document.body.style.top = `-${this.scrollY}px`;
                 }
 
-                // Start conversation if first time
-                if (!this.history.length) {
+                // Restore history if exists, otherwise start new conversation
+                if (this.history.length && !this.historyRestored) {
+                    this.restoreHistory();
+                } else if (!this.history.length) {
                     this.startConversation();
                 }
             } else {
                 // Close chat
                 this.container.classList.remove('open');
                 this.toggle.classList.remove('open');
+
+                // User manually closed - remember this to prevent auto-reopen
+                localStorage.setItem('sm_chat_closed', 'true');
 
                 // Unlock body scroll on mobile
                 if (this.isMobile) {
@@ -555,6 +611,18 @@
                 // Blur input to close keyboard
                 this.input.blur();
             }
+        }
+
+        restoreHistory() {
+            this.historyRestored = true;
+            this.history.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `snow-message ${msg.sender}`;
+                div.innerHTML = `<div class="snow-message-content">${msg.sender === 'bot' ? this.formatText(msg.text) : this.escapeHtml(msg.text)}</div>
+                    <div class="snow-message-time">${new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`;
+                this.messages.appendChild(div);
+            });
+            this.scrollToBottom();
         }
 
         async startConversation() {
@@ -589,7 +657,10 @@
                     body: JSON.stringify({ sessionId: this.sessionId, message, leadData: this.leadData })
                 });
                 const data = await res.json();
-                if (data.leadData) this.leadData = { ...this.leadData, ...data.leadData };
+                if (data.leadData) {
+                    this.leadData = { ...this.leadData, ...data.leadData };
+                    this.saveLeadData();
+                }
                 await this.delay(Math.min(1000 + data.message.length * 20, 3000));
                 this.hideTyping();
                 this.addMessage(data.message, 'bot');
@@ -611,6 +682,7 @@
             this.messages.appendChild(div);
             this.scrollToBottom();
             this.history.push({ text, sender, time: new Date().toISOString() });
+            this.saveHistory();
         }
 
         formatText(text) {
@@ -672,6 +744,11 @@
         delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
         openCalendly() {
+            // On mobile, close chat first so Calendly is fully visible
+            if (this.isMobile && this.isOpen) {
+                this.toggleChat();
+            }
+
             window.Calendly ? Calendly.initPopupWidget({
                 url: CONFIG.calendlyUrl,
                 prefill: { name: this.leadData.name || '', email: this.leadData.email || '' }
