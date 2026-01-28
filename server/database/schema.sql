@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     lead_email TEXT,
     lead_phone TEXT,
     lead_business_type TEXT,
-    outcome TEXT DEFAULT 'in_progress' CHECK(outcome IN ('in_progress', 'converted', 'abandoned')),
+    outcome TEXT DEFAULT 'in_progress' CHECK(outcome IN ('in_progress', 'converted', 'contact_captured', 'not_qualified', 'abandoned')),
     message_count INTEGER DEFAULT 0,
     source_url TEXT
 );

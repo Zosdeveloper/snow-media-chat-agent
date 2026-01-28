@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snow Media Chat - Admin Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
+            color: #e4e4e7;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #27272a;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header h1 span { color: #3b82f6; }
+
+        .api-key-form {
+            display: flex;
+            gap: 10px;
+        }
+
+        .api-key-form input {
+            padding: 8px 12px;
+            border: 1px solid #27272a;
+            border-radius: 6px;
+            background: #18181b;
+            color: #e4e4e7;
+            width: 250px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover { background: #2563eb; }
+
+        .btn-success {
+            background: #22c55e;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-contact {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #27272a;
+            color: #e4e4e7;
+        }
+
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .stat-card .label {
+            font-size: 13px;
+            color: #71717a;
+            margin-bottom: 8px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .stat-card.converted .value { color: #22c55e; }
+        .stat-card.contact .value { color: #3b82f6; }
+        .stat-card.not-qualified .value { color: #f59e0b; }
+        .stat-card.abandoned .value { color: #ef4444; }
+
+        /* Main Layout */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 20px;
+            height: calc(100vh - 220px);
+        }
+
+        /* Conversation List */
+        .conversation-list {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .list-header {
+            padding: 16px;
+            border-bottom: 1px solid #27272a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .list-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .filter-tabs {
+            display: flex;
+            gap: 4px;
+        }
+
+        .filter-tab {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            background: transparent;
+            color: #71717a;
+            border: none;
+        }
+
+        .filter-tab.active {
+            background: #27272a;
+            color: #e4e4e7;
+        }
+
+        .conversations {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .conversation-item {
+            padding: 14px 16px;
+            border-bottom: 1px solid #27272a;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .conversation-item:hover { background: #1f1f23; }
+        .conversation-item.active { background: #27272a; }
+
+        .conversation-item .top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .conversation-item .name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .conversation-item .time {
+            font-size: 11px;
+            color: #71717a;
+        }
+
+        .conversation-item .preview {
+            font-size: 13px;
+            color: #a1a1aa;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .conversation-item .meta {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .badge-converted { background: #14532d; color: #22c55e; }
+        .badge-contact { background: #172554; color: #3b82f6; }
+        .badge-not-qualified { background: #451a03; color: #f59e0b; }
+        .badge-abandoned { background: #450a0a; color: #ef4444; }
+        .badge-active { background: #27272a; color: #a1a1aa; }
+        .badge-messages { background: #27272a; color: #a1a1aa; }
+
+        /* Conversation Detail */
+        .conversation-detail {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .detail-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #27272a;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .lead-info h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+        }
+
+        .lead-info .contact {
+            font-size: 13px;
+            color: #a1a1aa;
+        }
+
+        .lead-info .contact a {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+
+        .outcome-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .message {
+            max-width: 80%;
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .message.user {
+            background: #3b82f6;
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant {
+            background: #27272a;
+            color: #e4e4e7;
+            margin-right: auto;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message .timestamp {
+            font-size: 10px;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #71717a;
+        }
+
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #71717a;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+
+            .conversation-list {
+                height: 400px;
+            }
+
+            .conversation-detail {
+                height: 500px;
+            }
+        }
+
+        /* Auth overlay */
+        .auth-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .auth-box {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 12px;
+            padding: 30px;
+            width: 350px;
+        }
+
+        .auth-box h2 {
+            margin-bottom: 20px;
+        }
+
+        .auth-box input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #27272a;
+            border-radius: 6px;
+            background: #0f1117;
+            color: #e4e4e7;
+            margin-bottom: 16px;
+        }
+
+        .auth-box .btn {
+            width: 100%;
+        }
+
+        .auth-error {
+            color: #ef4444;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <!-- Auth Overlay -->
+    <div class="auth-overlay" id="authOverlay">
+        <div class="auth-box">
+            <h2>Admin Login</h2>
+            <div class="auth-error hidden" id="authError">Invalid API key</div>
+            <input type="password" id="apiKeyInput" placeholder="Enter Admin API Key" autocomplete="off">
+            <button class="btn btn-primary" onclick="authenticate()">Login</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>Snow Media <span>Chat Admin</span></h1>
+            <button class="btn btn-secondary" onclick="logout()">Logout</button>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="label">Total Conversations</div>
+                <div class="value" id="statTotal">-</div>
+            </div>
+            <div class="stat-card converted">
+                <div class="label">Converted</div>
+                <div class="value" id="statConverted">-</div>
+            </div>
+            <div class="stat-card contact">
+                <div class="label">Contact Captured</div>
+                <div class="value" id="statContact">-</div>
+            </div>
+            <div class="stat-card not-qualified">
+                <div class="label">Not Qualified</div>
+                <div class="value" id="statNotQualified">-</div>
+            </div>
+            <div class="stat-card abandoned">
+                <div class="label">Abandoned</div>
+                <div class="value" id="statAbandoned">-</div>
+            </div>
+        </div>
+
+        <!-- Main Layout -->
+        <div class="main-layout">
+            <!-- Conversation List -->
+            <div class="conversation-list">
+                <div class="list-header">
+                    <h2>Conversations</h2>
+                    <div class="filter-tabs">
+                        <button class="filter-tab active" data-filter="all">All</button>
+                        <button class="filter-tab" data-filter="converted">Converted</button>
+                        <button class="filter-tab" data-filter="contact_captured">Contact</button>
+                        <button class="filter-tab" data-filter="not_qualified">Not Qualified</button>
+                        <button class="filter-tab" data-filter="abandoned">Abandoned</button>
+                    </div>
+                </div>
+                <div class="conversations" id="conversationsList">
+                    <div class="loading">Loading conversations...</div>
+                </div>
+            </div>
+
+            <!-- Conversation Detail -->
+            <div class="conversation-detail">
+                <div class="empty-state" id="emptyDetail">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    <p>Select a conversation to view</p>
+                </div>
+                <div class="hidden" id="detailContent">
+                    <div class="detail-header">
+                        <div class="lead-info">
+                            <h3 id="detailName">-</h3>
+                            <div class="contact" id="detailContact"></div>
+                        </div>
+                        <div class="outcome-actions">
+                            <button class="btn btn-success btn-sm" onclick="markOutcome('converted')">Converted</button>
+                            <button class="btn btn-contact btn-sm" onclick="markOutcome('contact_captured')">Contact Captured</button>
+                            <button class="btn btn-warning btn-sm" onclick="markOutcome('not_qualified')">Not Qualified</button>
+                            <button class="btn btn-danger btn-sm" onclick="markOutcome('abandoned')">Abandoned</button>
+                        </div>
+                    </div>
+                    <div class="messages-container" id="messagesContainer"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let apiKey = localStorage.getItem('adminApiKey') || '';
+        let currentFilter = 'all';
+        let currentConversationId = null;
+        let conversations = [];
+
+        // API base URL
+        const API_BASE = window.location.origin;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            if (apiKey) {
+                verifyAndLoad();
+            }
+
+            // Enter key to login
+            document.getElementById('apiKeyInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') authenticate();
+            });
+
+            // Filter tabs
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    currentFilter = tab.dataset.filter;
+                    renderConversations();
+                });
+            });
+        });
+
+        async function authenticate() {
+            apiKey = document.getElementById('apiKeyInput').value;
+            if (!apiKey) return;
+
+            const success = await verifyAndLoad();
+            if (success) {
+                localStorage.setItem('adminApiKey', apiKey);
+            }
+        }
+
+        async function verifyAndLoad() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/health`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+
+                if (!res.ok) throw new Error('Invalid key');
+
+                document.getElementById('authOverlay').classList.add('hidden');
+                document.getElementById('authError').classList.add('hidden');
+                loadDashboard();
+                return true;
+            } catch (e) {
+                document.getElementById('authError').classList.remove('hidden');
+                document.getElementById('authOverlay').classList.remove('hidden');
+                return false;
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('adminApiKey');
+            apiKey = '';
+            document.getElementById('authOverlay').classList.remove('hidden');
+            document.getElementById('apiKeyInput').value = '';
+        }
+
+        async function loadDashboard() {
+            await Promise.all([loadStats(), loadConversations()]);
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/stats`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+
+                document.getElementById('statTotal').textContent = data.database.conversations.total;
+                document.getElementById('statConverted').textContent = data.database.conversations.converted;
+                document.getElementById('statContact').textContent = data.database.conversations.contact_captured || 0;
+                document.getElementById('statNotQualified').textContent = data.database.conversations.not_qualified || 0;
+                document.getElementById('statAbandoned').textContent = data.database.conversations.abandoned;
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+
+        async function loadConversations() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/conversations?limit=100`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+                conversations = data.conversations;
+                renderConversations();
+            } catch (e) {
+                console.error('Failed to load conversations:', e);
+                document.getElementById('conversationsList').innerHTML = '<div class="loading">Failed to load</div>';
+            }
+        }
+
+        function renderConversations() {
+            const list = document.getElementById('conversationsList');
+            let filtered = conversations;
+
+            if (currentFilter !== 'all') {
+                filtered = conversations.filter(c => c.outcome === currentFilter);
+            }
+
+            if (filtered.length === 0) {
+                list.innerHTML = '<div class="loading">No conversations found</div>';
+                return;
+            }
+
+            list.innerHTML = filtered.map(c => {
+                const name = c.lead_name || c.lead_email || 'Unknown Visitor';
+                const time = formatTime(c.created_at);
+                const badgeMap = {
+                    'converted': { class: 'badge-converted', text: 'Converted' },
+                    'contact_captured': { class: 'badge-contact', text: 'Contact' },
+                    'not_qualified': { class: 'badge-not-qualified', text: 'Not Qualified' },
+                    'abandoned': { class: 'badge-abandoned', text: 'Abandoned' },
+                    'in_progress': { class: 'badge-active', text: 'Active' }
+                };
+                const badge = badgeMap[c.outcome] || badgeMap['in_progress'];
+                const badgeClass = badge.class;
+                const badgeText = badge.text;
+
+                return `
+                    <div class="conversation-item ${c.id === currentConversationId ? 'active' : ''}"
+                         onclick="selectConversation('${c.id}')">
+                        <div class="top-row">
+                            <span class="name">${escapeHtml(name)}</span>
+                            <span class="time">${time}</span>
+                        </div>
+                        <div class="preview">${c.lead_business_type ? escapeHtml(c.lead_business_type) : 'No business info'}</div>
+                        <div class="meta">
+                            <span class="badge ${badgeClass}">${badgeText}</span>
+                            <span class="badge badge-messages">${c.message_count} msgs</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function selectConversation(id) {
+            currentConversationId = id;
+            renderConversations(); // Update active state
+
+            document.getElementById('emptyDetail').classList.add('hidden');
+            document.getElementById('detailContent').classList.remove('hidden');
+            document.getElementById('messagesContainer').innerHTML = '<div class="loading">Loading...</div>';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/conversations/${id}`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+
+                // Update header
+                const name = data.lead_name || data.lead_email || 'Unknown Visitor';
+                document.getElementById('detailName').textContent = name;
+
+                let contactHtml = [];
+                if (data.lead_email) contactHtml.push(`<a href="mailto:${data.lead_email}">${data.lead_email}</a>`);
+                if (data.lead_phone) contactHtml.push(`<a href="tel:${data.lead_phone}">${data.lead_phone}</a>`);
+                if (data.lead_business_type) contactHtml.push(data.lead_business_type);
+                document.getElementById('detailContact').innerHTML = contactHtml.join(' &bull; ');
+
+                // Render messages
+                const container = document.getElementById('messagesContainer');
+                container.innerHTML = data.messages.map(m => `
+                    <div class="message ${m.role}">
+                        ${escapeHtml(m.content)}
+                        <div class="timestamp">${formatTime(m.created_at)}</div>
+                    </div>
+                `).join('');
+
+                // Scroll to bottom
+                container.scrollTop = container.scrollHeight;
+            } catch (e) {
+                console.error('Failed to load conversation:', e);
+                document.getElementById('messagesContainer').innerHTML = '<div class="loading">Failed to load</div>';
+            }
+        }
+
+        async function markOutcome(outcome) {
+            if (!currentConversationId) return;
+
+            try {
+                await fetch(`${API_BASE}/api/admin/conversations/${currentConversationId}/outcome`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-Api-Key': apiKey
+                    },
+                    body: JSON.stringify({ outcome })
+                });
+
+                // Reload
+                await loadDashboard();
+                if (currentConversationId) {
+                    selectConversation(currentConversationId);
+                }
+            } catch (e) {
+                console.error('Failed to update outcome:', e);
+                alert('Failed to update outcome');
+            }
+        }
+
+        // Helpers
+        function formatTime(dateStr) {
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffHrs = diffMs / (1000 * 60 * 60);
+
+            if (diffHrs < 24) {
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } else if (diffHrs < 48) {
+                return 'Yesterday';
+            } else {
+                return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            }
+        }
+
+        function capitalize(str) {
+            return str.charAt(0).toUpperCase() + str.slice(1);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[m]);
+        }
+    </script>
+</body>
+</html>

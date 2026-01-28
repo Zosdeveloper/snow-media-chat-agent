@@ -43,6 +43,50 @@ async function initialize() {
     const schema = fs.readFileSync(schemaPath, 'utf8');
     db.exec(schema);
 
+    // Migration: Add new outcome values to conversations table
+    // SQLite doesn't support ALTER CHECK constraint, so we recreate the table
+    try {
+        const tableInfo = db.prepare("PRAGMA table_info(conversations)").all();
+        const needsMigration = tableInfo.length > 0;
+
+        if (needsMigration) {
+            // Check if migration is needed by trying to see current constraint
+            // We'll just recreate the table to ensure new outcomes are supported
+            const hasData = db.prepare("SELECT COUNT(*) as count FROM conversations").get();
+
+            if (hasData.count > 0) {
+                // Migrate existing data
+                db.exec(`
+                    CREATE TABLE IF NOT EXISTS conversations_new (
+                        id TEXT PRIMARY KEY,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        lead_name TEXT,
+                        lead_email TEXT,
+                        lead_phone TEXT,
+                        lead_business_type TEXT,
+                        outcome TEXT DEFAULT 'in_progress' CHECK(outcome IN ('in_progress', 'converted', 'contact_captured', 'not_qualified', 'abandoned')),
+                        message_count INTEGER DEFAULT 0,
+                        source_url TEXT
+                    );
+
+                    INSERT OR IGNORE INTO conversations_new SELECT * FROM conversations;
+
+                    DROP TABLE conversations;
+
+                    ALTER TABLE conversations_new RENAME TO conversations;
+
+                    CREATE INDEX IF NOT EXISTS idx_conversations_outcome ON conversations(outcome);
+                    CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
+                `);
+                console.log('Database migrated to support new outcome values');
+            }
+        }
+    } catch (err) {
+        // Migration might fail if already done or table structure changed, that's okay
+        console.log('Migration check completed:', err.message);
+    }
+
     // Create virtual table for vector search if extension loaded
     if (vecLoaded) {
         try {
@@ -406,6 +450,8 @@ function getStats() {
         SELECT
             COUNT(*) as total,
             SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN outcome = 'contact_captured' THEN 1 ELSE 0 END) as contact_captured,
+            SUM(CASE WHEN outcome = 'not_qualified' THEN 1 ELSE 0 END) as not_qualified,
             SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) as abandoned,
             SUM(CASE WHEN outcome = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
             AVG(message_count) as avg_messages

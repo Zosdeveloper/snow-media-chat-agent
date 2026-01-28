@@ -97,8 +97,8 @@ router.patch('/conversations/:id/outcome', async (req, res) => {
     try {
         const { outcome } = req.body;
 
-        if (!['converted', 'abandoned', 'in_progress'].includes(outcome)) {
-            return res.status(400).json({ error: 'Invalid outcome. Must be: converted, abandoned, or in_progress' });
+        if (!['converted', 'contact_captured', 'not_qualified', 'abandoned', 'in_progress'].includes(outcome)) {
+            return res.status(400).json({ error: 'Invalid outcome. Must be: converted, contact_captured, not_qualified, abandoned, or in_progress' });
         }
 
         const conversation = db.getConversation(req.params.id);

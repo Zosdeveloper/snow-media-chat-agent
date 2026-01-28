@@ -19,6 +19,7 @@ const autoTagger = require('./services/autoTagger');
 const promptBuilder = require('./services/promptBuilder');
 const adminRoutes = require('./routes/admin');
 const config = require('./config');
+const alerts = require('./services/alertService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -392,6 +393,14 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
 
     } catch (error) {
         console.error('Chat error:', error);
+
+        // Send alert for critical chat failures
+        alerts.chatError(error, {
+            sessionId: req.body?.sessionId,
+            userMessage: req.body?.message?.substring(0, 100),
+            endpoint: '/api/chat'
+        });
+
         res.status(500).json({
             error: 'Sorry, I encountered an issue. Please try again.',
             details: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -465,6 +474,14 @@ app.post('/api/leads', async (req, res) => {
 
     } catch (error) {
         console.error('Lead capture error:', error);
+
+        // Alert on lead capture failures - these are high value
+        alerts.leadCaptureError(error, {
+            sessionId: req.body?.sessionId,
+            leadData: req.body?.leadData,
+            endpoint: '/api/leads'
+        });
+
         res.status(500).json({ error: 'Failed to capture lead' });
     }
 });
