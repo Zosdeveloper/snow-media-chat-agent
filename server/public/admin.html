@@ -37,6 +37,11 @@
 
         .header h1 span { color: #3b82f6; }
 
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
         .api-key-form {
             display: flex;
             gap: 10px;
@@ -415,7 +420,10 @@
     <div class="container">
         <div class="header">
             <h1>Snow Media <span>Chat Admin</span></h1>
-            <button class="btn btn-secondary" onclick="logout()">Logout</button>
+            <div class="header-actions">
+                <button class="btn btn-primary" onclick="exportLeads()">Export CSV</button>
+                <button class="btn btn-secondary" onclick="logout()">Logout</button>
+            </div>
         </div>
 
         <!-- Stats -->
@@ -553,6 +561,10 @@
             apiKey = '';
             document.getElementById('authOverlay').classList.remove('hidden');
             document.getElementById('apiKeyInput').value = '';
+        }
+
+        function exportLeads() {
+            window.location.href = `${API_BASE}/api/admin/export/leads?apiKey=${encodeURIComponent(apiKey)}`;
         }
 
         async function loadDashboard() {

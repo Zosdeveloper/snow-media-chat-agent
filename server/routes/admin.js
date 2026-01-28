@@ -309,6 +309,60 @@ router.post('/patterns/reindex', async (req, res) => {
 });
 
 // ============================================
+// EXPORT ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/admin/export/leads
+ * Export leads as CSV
+ */
+router.get('/export/leads', (req, res) => {
+    try {
+        const { outcome, from, to } = req.query;
+
+        const conversations = db.listConversations({
+            limit: 10000,
+            outcome: outcome || null,
+            orderBy: 'created_at',
+            order: 'DESC'
+        });
+
+        // Filter by date if provided
+        let filtered = conversations;
+        if (from) {
+            const fromDate = new Date(from);
+            filtered = filtered.filter(c => new Date(c.created_at) >= fromDate);
+        }
+        if (to) {
+            const toDate = new Date(to);
+            filtered = filtered.filter(c => new Date(c.created_at) <= toDate);
+        }
+
+        // Build CSV
+        const headers = ['Date', 'Name', 'Email', 'Phone', 'Business Type', 'Outcome', 'Messages', 'Source URL'];
+        const rows = filtered.map(c => [
+            new Date(c.created_at).toISOString().split('T')[0],
+            (c.lead_name || '').replace(/,/g, ' '),
+            (c.lead_email || '').replace(/,/g, ' '),
+            (c.lead_phone || '').replace(/,/g, ' '),
+            (c.lead_business_type || '').replace(/,/g, ' '),
+            c.outcome || 'in_progress',
+            c.message_count || 0,
+            (c.source_url || '').replace(/,/g, ' ')
+        ]);
+
+        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="leads-${new Date().toISOString().split('T')[0]}.csv"`);
+        res.send(csv);
+    } catch (error) {
+        console.error('Error exporting leads:', error.message);
+        res.status(500).json({ error: 'Failed to export leads' });
+    }
+});
+
+// ============================================
 // STATS ENDPOINTS
 // ============================================
 
