@@ -404,6 +404,164 @@
         }
 
         .hidden { display: none !important; }
+
+        /* View Tabs */
+        .view-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #27272a;
+        }
+
+        .view-tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: #71717a;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+        }
+
+        .view-tab.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+
+        /* Analytics Grid */
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .analytics-card {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .analytics-card h3 {
+            font-size: 14px;
+            color: #71717a;
+            margin-bottom: 16px;
+            font-weight: 500;
+        }
+
+        .big-stat {
+            font-size: 48px;
+            font-weight: 700;
+            color: #3b82f6;
+        }
+
+        .big-stat.green { color: #22c55e; }
+
+        .big-stat-label {
+            font-size: 14px;
+            color: #71717a;
+            margin-top: 4px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #27272a;
+        }
+
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+
+        .stat-row .label {
+            color: #a1a1aa;
+        }
+
+        .stat-row .value {
+            font-weight: 600;
+        }
+
+        .bar-chart {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bar-label {
+            width: 60px;
+            font-size: 12px;
+            color: #71717a;
+        }
+
+        .bar-container {
+            flex: 1;
+            height: 24px;
+            background: #27272a;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+
+        .bar-fill.green { background: #22c55e; }
+
+        .bar-value {
+            width: 40px;
+            text-align: right;
+            font-size: 12px;
+            color: #a1a1aa;
+        }
+
+        .source-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .source-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            background: #27272a;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .source-item .url {
+            color: #a1a1aa;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .source-item .stats {
+            display: flex;
+            gap: 12px;
+        }
+
+        .source-item .stats span {
+            color: #71717a;
+        }
+
+        .source-item .stats strong {
+            color: #e4e4e7;
+        }
     </style>
 </head>
 <body>
@@ -425,6 +583,15 @@
                 <button class="btn btn-secondary" onclick="logout()">Logout</button>
             </div>
         </div>
+
+        <!-- View Tabs -->
+        <div class="view-tabs">
+            <button class="view-tab active" data-view="conversations" onclick="switchView('conversations')">Conversations</button>
+            <button class="view-tab" data-view="analytics" onclick="switchView('analytics')">Analytics</button>
+        </div>
+
+        <!-- Conversations View -->
+        <div id="conversationsView">
 
         <!-- Stats -->
         <div class="stats-grid" id="statsGrid">
@@ -494,6 +661,49 @@
                 </div>
             </div>
         </div>
+
+        </div><!-- End Conversations View -->
+
+        <!-- Analytics View -->
+        <div id="analyticsView" class="hidden">
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>Conversion Rate</h3>
+                    <div class="big-stat green" id="conversionRate">0%</div>
+                    <div class="big-stat-label">of conversations booked a call</div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Avg Messages Before Booking</h3>
+                    <div class="big-stat" id="avgMessages">0</div>
+                    <div class="big-stat-label">messages in converted conversations</div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Leads with Contact Info</h3>
+                    <div class="big-stat" id="leadsWithContact">0</div>
+                    <div class="big-stat-label">visitors shared email or phone</div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Outcomes Breakdown</h3>
+                    <div class="bar-chart" id="outcomesChart"></div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Busiest Hours</h3>
+                    <div class="bar-chart" id="hourlyChart"></div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Top Sources</h3>
+                    <div class="source-list" id="sourcesList">
+                        <div class="loading">No data yet</div>
+                    </div>
+                </div>
+            </div>
+        </div><!-- End Analytics View -->
+
     </div>
 
     <script>
@@ -736,6 +946,88 @@
             return str.replace(/[&<>"']/g, m => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
             })[m]);
+        }
+
+        // View switching
+        function switchView(view) {
+            document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.view-tab[data-view="${view}"]`).classList.add('active');
+
+            document.getElementById('conversationsView').classList.toggle('hidden', view !== 'conversations');
+            document.getElementById('analyticsView').classList.toggle('hidden', view !== 'analytics');
+
+            if (view === 'analytics') {
+                loadAnalytics();
+            }
+        }
+
+        async function loadAnalytics() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/analytics`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+
+                // Conversion rate
+                document.getElementById('conversionRate').textContent = data.conversion.rate + '%';
+
+                // Avg messages
+                document.getElementById('avgMessages').textContent = data.messages.avgBeforeConversion || '-';
+
+                // Leads with contact
+                document.getElementById('leadsWithContact').textContent = data.leadsWithContact;
+
+                // Outcomes breakdown
+                const outcomes = [
+                    { label: 'Converted', value: data.conversion.converted, color: 'green' },
+                    { label: 'Contact', value: data.conversion.contact_captured, color: '' },
+                    { label: 'Not Qualified', value: data.conversion.not_qualified, color: '' },
+                    { label: 'Abandoned', value: data.conversion.abandoned, color: '' }
+                ];
+                const maxOutcome = Math.max(...outcomes.map(o => o.value), 1);
+                document.getElementById('outcomesChart').innerHTML = outcomes.map(o => `
+                    <div class="bar-row">
+                        <span class="bar-label">${o.label}</span>
+                        <div class="bar-container">
+                            <div class="bar-fill ${o.color}" style="width: ${(o.value / maxOutcome) * 100}%"></div>
+                        </div>
+                        <span class="bar-value">${o.value}</span>
+                    </div>
+                `).join('');
+
+                // Hourly chart (top 6 hours)
+                const hourly = data.hourly || [];
+                const topHours = [...hourly].sort((a, b) => b.count - a.count).slice(0, 6).sort((a, b) => a.hour - b.hour);
+                const maxHour = Math.max(...topHours.map(h => h.count), 1);
+                document.getElementById('hourlyChart').innerHTML = topHours.length > 0 ? topHours.map(h => `
+                    <div class="bar-row">
+                        <span class="bar-label">${h.hour}:00</span>
+                        <div class="bar-container">
+                            <div class="bar-fill" style="width: ${(h.count / maxHour) * 100}%"></div>
+                        </div>
+                        <span class="bar-value">${h.count}</span>
+                    </div>
+                `).join('') : '<div class="loading">No data yet</div>';
+
+                // Top sources
+                const sources = data.topSources || [];
+                document.getElementById('sourcesList').innerHTML = sources.length > 0 ? sources.map(s => {
+                    const url = s.source_url || 'Direct';
+                    const shortUrl = url.replace(/^https?:\/\//, '').substring(0, 30);
+                    return `
+                        <div class="source-item">
+                            <span class="url" title="${escapeHtml(url)}">${escapeHtml(shortUrl)}</span>
+                            <div class="stats">
+                                <span><strong>${s.count}</strong> visits</span>
+                                <span><strong>${s.converted}</strong> converted</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('') : '<div class="loading">No data yet</div>';
+
+            } catch (e) {
+                console.error('Failed to load analytics:', e);
+            }
         }
     </script>
 </body>

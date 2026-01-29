@@ -387,6 +387,104 @@ router.get('/stats', (req, res) => {
 });
 
 /**
+ * GET /api/admin/analytics
+ * Get detailed analytics for dashboard
+ */
+router.get('/analytics', (req, res) => {
+    try {
+        const dbInstance = db.getDb();
+
+        // Conversion rate
+        const conversionStats = dbInstance.prepare(`
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted,
+                SUM(CASE WHEN outcome = 'contact_captured' THEN 1 ELSE 0 END) as contact_captured,
+                SUM(CASE WHEN outcome = 'not_qualified' THEN 1 ELSE 0 END) as not_qualified,
+                SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) as abandoned
+            FROM conversations
+        `).get();
+
+        // Average messages before conversion
+        const avgMessages = dbInstance.prepare(`
+            SELECT
+                AVG(CASE WHEN outcome = 'converted' THEN message_count END) as avg_converted,
+                AVG(CASE WHEN outcome = 'contact_captured' THEN message_count END) as avg_contact,
+                AVG(message_count) as avg_all
+            FROM conversations
+            WHERE message_count > 0
+        `).get();
+
+        // Conversations over last 30 days
+        const dailyStats = dbInstance.prepare(`
+            SELECT
+                DATE(created_at) as date,
+                COUNT(*) as total,
+                SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted
+            FROM conversations
+            WHERE created_at >= DATE('now', '-30 days')
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        `).all();
+
+        // Leads with contact info
+        const leadsWithContact = dbInstance.prepare(`
+            SELECT COUNT(*) as count
+            FROM conversations
+            WHERE lead_email IS NOT NULL OR lead_phone IS NOT NULL
+        `).get();
+
+        // Busiest hours (when people chat)
+        const hourlyStats = dbInstance.prepare(`
+            SELECT
+                CAST(strftime('%H', created_at) AS INTEGER) as hour,
+                COUNT(*) as count
+            FROM conversations
+            GROUP BY hour
+            ORDER BY hour ASC
+        `).all();
+
+        // Top source URLs
+        const topSources = dbInstance.prepare(`
+            SELECT
+                source_url,
+                COUNT(*) as count,
+                SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted
+            FROM conversations
+            WHERE source_url IS NOT NULL AND source_url != ''
+            GROUP BY source_url
+            ORDER BY count DESC
+            LIMIT 10
+        `).all();
+
+        res.json({
+            conversion: {
+                total: conversionStats.total || 0,
+                converted: conversionStats.converted || 0,
+                contact_captured: conversionStats.contact_captured || 0,
+                not_qualified: conversionStats.not_qualified || 0,
+                abandoned: conversionStats.abandoned || 0,
+                rate: conversionStats.total > 0
+                    ? ((conversionStats.converted / conversionStats.total) * 100).toFixed(1)
+                    : 0
+            },
+            messages: {
+                avgBeforeConversion: avgMessages.avg_converted ? Math.round(avgMessages.avg_converted) : 0,
+                avgBeforeContact: avgMessages.avg_contact ? Math.round(avgMessages.avg_contact) : 0,
+                avgAll: avgMessages.avg_all ? Math.round(avgMessages.avg_all) : 0
+            },
+            daily: dailyStats,
+            leadsWithContact: leadsWithContact.count || 0,
+            hourly: hourlyStats,
+            topSources: topSources
+        });
+    } catch (error) {
+        console.error('Error getting analytics:', error.message);
+        res.status(500).json({ error: 'Failed to get analytics' });
+    }
+});
+
+/**
  * GET /api/admin/health
  * Admin health check with more details
  */
