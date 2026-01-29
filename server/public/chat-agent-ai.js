@@ -130,7 +130,7 @@ class SnowMediaAIChatAgent {
         // Show initial quick replies
         this.showQuickReplies([
             "Yes, I run an e-commerce brand",
-            "Yes, I run a home service business",
+            "Yes, I do lead gen",
             "Just exploring"
         ]);
     }
