@@ -28,17 +28,15 @@ const PORT = process.env.PORT || 3000;
 // CORS configuration - use centralized config
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin only in development (direct access, curl, Postman, etc.)
+        // Requests with no origin: server-to-server, health checks, same-origin navigation
         if (!origin) {
-            if (config.nodeEnv === 'development') {
-                return callback(null, true);
-            }
-            return callback(new Error('Not allowed by CORS'));
+            return callback(null, true);
         }
         if (config.allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            callback(new Error('Not allowed by CORS'));
+            // Pass false instead of error — browser enforces CORS, server stays stable
+            callback(null, false);
         }
     },
     credentials: true
