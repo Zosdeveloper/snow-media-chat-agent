@@ -132,11 +132,27 @@ async function reindexAllPatterns() {
     let success = 0;
     let failed = 0;
 
+    // Generate all embeddings first (async), then apply changes in a transaction
+    const updates = [];
     for (const pattern of patterns) {
         try {
             const embedding = await embeddingService.generateConversationEmbedding(pattern.messages);
             if (embedding) {
-                // Delete and recreate to update vector index
+                updates.push({ pattern, embedding });
+            } else {
+                failed++;
+            }
+        } catch (error) {
+            console.error(`Error generating embedding for pattern ${pattern.id}:`, error.message);
+            failed++;
+        }
+    }
+
+    // Apply all delete/create operations in a single transaction
+    if (updates.length > 0) {
+        const dbInstance = db.getDb();
+        const transaction = dbInstance.transaction(() => {
+            for (const { pattern, embedding } of updates) {
                 const data = {
                     conversation_id: pattern.conversation_id,
                     pattern_type: pattern.pattern_type,
@@ -152,12 +168,16 @@ async function reindexAllPatterns() {
                 db.deletePattern(pattern.id);
                 db.createPattern(data);
                 success++;
-            } else {
-                failed++;
             }
+        });
+
+        try {
+            transaction();
         } catch (error) {
-            console.error(`Error reindexing pattern ${pattern.id}:`, error.message);
-            failed++;
+            console.error('Reindex transaction failed, no patterns were modified:', error.message);
+            // Reset counts since transaction rolled back
+            success = 0;
+            failed = patterns.length;
         }
     }
 

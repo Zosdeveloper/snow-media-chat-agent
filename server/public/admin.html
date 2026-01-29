@@ -836,17 +836,33 @@
             document.getElementById('exportModal').classList.add('hidden');
         }
 
-        function exportLeads() {
+        async function exportLeads() {
             const outcome = document.getElementById('exportOutcome').value;
             const from = document.getElementById('exportFrom').value;
             const to = document.getElementById('exportTo').value;
 
-            let url = `${API_BASE}/api/admin/export/leads?apiKey=${encodeURIComponent(apiKey)}`;
-            if (outcome) url += `&outcome=${outcome}`;
-            if (from) url += `&from=${from}`;
-            if (to) url += `&to=${to}`;
+            let url = `${API_BASE}/api/admin/export/leads?`;
+            const params = [];
+            if (outcome) params.push(`outcome=${outcome}`);
+            if (from) params.push(`from=${from}`);
+            if (to) params.push(`to=${to}`);
+            url += params.join('&');
 
-            window.location.href = url;
+            try {
+                const res = await fetch(url, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                if (!res.ok) throw new Error('Export failed');
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `leads-${new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            } catch (e) {
+                console.error('Export failed:', e);
+                alert('Failed to export leads');
+            }
             hideExportModal();
         }
 

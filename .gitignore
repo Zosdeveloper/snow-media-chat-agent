@@ -2,7 +2,7 @@
 node_modules/
 
 # Environment variables (contains API keys)
-.env
+**/.env
 
 # OS files
 .DS_Store

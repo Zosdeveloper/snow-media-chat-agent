@@ -413,13 +413,20 @@
     `;
     document.head.appendChild(style);
 
+    // Escape a string for safe use in HTML attributes
+    function escapeAttr(str) {
+        const div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
+
     // Create Widget HTML
     function createWidget() {
         const widget = document.createElement('div');
         widget.id = 'snow-chat-widget';
         widget.innerHTML = `
             <button class="snow-toggle" type="button" aria-label="Open chat">
-                <img src="${CONFIG.logoImg}" alt="Chat">
+                <img src="${escapeAttr(CONFIG.logoImg)}" alt="Chat">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
                     <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -429,7 +436,7 @@
             <div class="snow-container">
                 <div class="snow-header">
                     <div class="snow-header-info">
-                        <div class="snow-avatar"><img src="${CONFIG.avatarImg}" alt="Milos"></div>
+                        <div class="snow-avatar"><img src="${escapeAttr(CONFIG.avatarImg)}" alt="Milos"></div>
                         <div class="snow-header-text">
                             <h3>Milos</h3>
                             <span class="snow-status"><span class="snow-status-dot"></span>Online now</span>

@@ -4,6 +4,7 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const db = require('../database/db');
 const ragService = require('../services/ragService');
@@ -14,13 +15,20 @@ const config = require('../config');
  * Admin authentication middleware
  */
 function adminAuth(req, res, next) {
-    const apiKey = req.headers['x-admin-api-key'] || req.query.apiKey;
+    const apiKey = req.headers['x-admin-api-key'];
 
     if (!config.adminApiKey) {
         return res.status(500).json({ error: 'Admin API key not configured' });
     }
 
-    if (!apiKey || apiKey !== config.adminApiKey) {
+    if (!apiKey || typeof apiKey !== 'string') {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    // Use timing-safe comparison to prevent timing attacks
+    const keyBuffer = Buffer.from(apiKey);
+    const configKeyBuffer = Buffer.from(config.adminApiKey);
+    if (keyBuffer.length !== configKeyBuffer.length || !crypto.timingSafeEqual(keyBuffer, configKeyBuffer)) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -48,9 +56,12 @@ router.get('/conversations', (req, res) => {
             order = 'DESC'
         } = req.query;
 
+        const parsedLimit = parseInt(limit) || 50;
+        const parsedOffset = parseInt(offset) || 0;
+
         const conversations = db.listConversations({
-            limit: parseInt(limit),
-            offset: parseInt(offset),
+            limit: parsedLimit,
+            offset: parsedOffset,
             outcome,
             orderBy,
             order
@@ -59,8 +70,8 @@ router.get('/conversations', (req, res) => {
         res.json({
             conversations,
             pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
+                limit: parsedLimit,
+                offset: parsedOffset,
                 count: conversations.length
             }
         });
@@ -151,18 +162,22 @@ router.get('/patterns', (req, res) => {
             minConfidence = 0
         } = req.query;
 
+        const parsedLimit = parseInt(limit) || 50;
+        const parsedOffset = parseInt(offset) || 0;
+        const parsedMinConfidence = parseFloat(minConfidence) || 0;
+
         const patterns = db.listPatterns({
-            limit: parseInt(limit),
-            offset: parseInt(offset),
+            limit: parsedLimit,
+            offset: parsedOffset,
             pattern_type,
-            minConfidence: parseFloat(minConfidence)
+            minConfidence: parsedMinConfidence
         });
 
         res.json({
             patterns,
             pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
+                limit: parsedLimit,
+                offset: parsedOffset,
                 count: patterns.length
             }
         });
@@ -338,17 +353,31 @@ router.get('/export/leads', (req, res) => {
             filtered = filtered.filter(c => new Date(c.created_at) <= toDate);
         }
 
+        // Sanitize CSV cell to prevent formula injection
+        function csvSafe(value) {
+            let str = String(value || '');
+            // Prefix formula-triggering characters to prevent Excel injection
+            if (/^[=+\-@\t\r]/.test(str)) {
+                str = "'" + str;
+            }
+            // Escape quotes and wrap in quotes if contains comma, quote, or newline
+            if (/[,"\n\r]/.test(str)) {
+                str = '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+        }
+
         // Build CSV
         const headers = ['Date', 'Name', 'Email', 'Phone', 'Business Type', 'Outcome', 'Messages', 'Source URL'];
         const rows = filtered.map(c => [
-            new Date(c.created_at).toISOString().split('T')[0],
-            (c.lead_name || '').replace(/,/g, ' '),
-            (c.lead_email || '').replace(/,/g, ' '),
-            (c.lead_phone || '').replace(/,/g, ' '),
-            (c.lead_business_type || '').replace(/,/g, ' '),
-            c.outcome || 'in_progress',
+            csvSafe(new Date(c.created_at).toISOString().split('T')[0]),
+            csvSafe(c.lead_name),
+            csvSafe(c.lead_email),
+            csvSafe(c.lead_phone),
+            csvSafe(c.lead_business_type),
+            csvSafe(c.outcome || 'in_progress'),
             c.message_count || 0,
-            (c.source_url || '').replace(/,/g, ' ')
+            csvSafe(c.source_url)
         ]);
 
         const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');

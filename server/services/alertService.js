@@ -31,11 +31,17 @@ async function sendAlert(type, details) {
     try {
         const payload = formatPayload(type, details, webhookUrl);
 
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+
         const response = await fetch(webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+
+        clearTimeout(timeout);
 
         if (!response.ok) {
             console.error(`[AlertService] Webhook failed: ${response.status}`);

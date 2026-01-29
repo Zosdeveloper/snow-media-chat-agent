@@ -275,8 +275,7 @@ async function markAsConverted(sessionId, session = null) {
     db.markConverted(sessionId);
 
     // If pattern exists, update booking_achieved
-    const existingPatterns = db.listPatterns({ limit: 100 })
-        .filter(p => p.conversation_id === sessionId);
+    const existingPatterns = db.getPatternsByConversation(sessionId);
 
     if (existingPatterns.length > 0) {
         // Update existing pattern - this would need a db update function
@@ -292,35 +291,41 @@ async function markAsConverted(sessionId, session = null) {
  * @returns {Object} - Statistics about auto-tagged patterns
  */
 function getTaggingStats() {
-    const patterns = db.listPatterns({ limit: 1000, minConfidence: 0 });
+    const dbInstance = db.getDb();
 
-    const stats = {
-        total: patterns.length,
-        byType: {},
-        byConfidence: {
-            high: 0,    // >= 0.8
-            medium: 0,  // >= 0.6
-            low: 0      // < 0.6
-        },
-        auto: 0,
-        manual: 0
-    };
+    const summary = dbInstance.prepare(`
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN confidence_score >= 0.8 THEN 1 ELSE 0 END) as high,
+            SUM(CASE WHEN confidence_score >= 0.6 AND confidence_score < 0.8 THEN 1 ELSE 0 END) as medium,
+            SUM(CASE WHEN confidence_score < 0.6 THEN 1 ELSE 0 END) as low,
+            SUM(CASE WHEN tagged_by = 'auto' THEN 1 ELSE 0 END) as auto,
+            SUM(CASE WHEN tagged_by != 'auto' THEN 1 ELSE 0 END) as manual
+        FROM successful_patterns
+    `).get();
 
-    for (const pattern of patterns) {
-        // By type
-        stats.byType[pattern.pattern_type] = (stats.byType[pattern.pattern_type] || 0) + 1;
+    const typeRows = dbInstance.prepare(`
+        SELECT pattern_type, COUNT(*) as count
+        FROM successful_patterns
+        GROUP BY pattern_type
+    `).all();
 
-        // By confidence
-        if (pattern.confidence_score >= 0.8) stats.byConfidence.high++;
-        else if (pattern.confidence_score >= 0.6) stats.byConfidence.medium++;
-        else stats.byConfidence.low++;
-
-        // By tagger
-        if (pattern.tagged_by === 'auto') stats.auto++;
-        else stats.manual++;
+    const byType = {};
+    for (const row of typeRows) {
+        byType[row.pattern_type] = row.count;
     }
 
-    return stats;
+    return {
+        total: summary.total || 0,
+        byType,
+        byConfidence: {
+            high: summary.high || 0,
+            medium: summary.medium || 0,
+            low: summary.low || 0
+        },
+        auto: summary.auto || 0,
+        manual: summary.manual || 0
+    };
 }
 
 module.exports = {

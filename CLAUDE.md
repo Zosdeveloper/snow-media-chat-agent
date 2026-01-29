@@ -145,13 +145,13 @@ Special tokens in AI responses:
 1. Set up environment variables in `server/.env`
 2. Run `npm run dev` in server directory
 3. Open `http://localhost:3000` to test chat widget
-4. Open `http://localhost:3000/admin.html?apiKey=YOUR_KEY` for admin
+4. Open `http://localhost:3000/admin.html` for admin (enter API key via login prompt)
 
 ## Deployment
 
 Deployed to Railway with auto-deploy from GitHub main branch.
 
-Admin dashboard: `https://snow-media-chat-agent-production.up.railway.app/admin.html?apiKey=YOUR_KEY`
+Admin dashboard: `https://snow-media-chat-agent-production.up.railway.app/admin.html` (enter API key via the login prompt)
 
 ## Important Notes
 

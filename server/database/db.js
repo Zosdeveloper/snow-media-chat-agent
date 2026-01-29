@@ -45,45 +45,51 @@ async function initialize() {
 
     // Migration: Add new outcome values to conversations table
     // SQLite doesn't support ALTER CHECK constraint, so we recreate the table
+    // Only run once — tracked via a migrations meta table
     try {
-        const tableInfo = db.prepare("PRAGMA table_info(conversations)").all();
-        const needsMigration = tableInfo.length > 0;
+        db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_outcome_values'").get();
 
-        if (needsMigration) {
-            // Check if migration is needed by trying to see current constraint
-            // We'll just recreate the table to ensure new outcomes are supported
+        if (!alreadyRun) {
             const hasData = db.prepare("SELECT COUNT(*) as count FROM conversations").get();
 
             if (hasData.count > 0) {
-                // Migrate existing data
-                db.exec(`
-                    CREATE TABLE IF NOT EXISTS conversations_new (
-                        id TEXT PRIMARY KEY,
-                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        lead_name TEXT,
-                        lead_email TEXT,
-                        lead_phone TEXT,
-                        lead_business_type TEXT,
-                        outcome TEXT DEFAULT 'in_progress' CHECK(outcome IN ('in_progress', 'converted', 'contact_captured', 'not_qualified', 'abandoned')),
-                        message_count INTEGER DEFAULT 0,
-                        source_url TEXT
-                    );
+                db.exec('BEGIN TRANSACTION');
+                try {
+                    db.exec(`
+                        CREATE TABLE IF NOT EXISTS conversations_new (
+                            id TEXT PRIMARY KEY,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            lead_name TEXT,
+                            lead_email TEXT,
+                            lead_phone TEXT,
+                            lead_business_type TEXT,
+                            outcome TEXT DEFAULT 'in_progress' CHECK(outcome IN ('in_progress', 'converted', 'contact_captured', 'not_qualified', 'abandoned')),
+                            message_count INTEGER DEFAULT 0,
+                            source_url TEXT
+                        );
 
-                    INSERT OR IGNORE INTO conversations_new SELECT * FROM conversations;
+                        INSERT OR IGNORE INTO conversations_new SELECT * FROM conversations;
 
-                    DROP TABLE conversations;
+                        DROP TABLE conversations;
 
-                    ALTER TABLE conversations_new RENAME TO conversations;
+                        ALTER TABLE conversations_new RENAME TO conversations;
 
-                    CREATE INDEX IF NOT EXISTS idx_conversations_outcome ON conversations(outcome);
-                    CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
-                `);
-                console.log('Database migrated to support new outcome values');
+                        CREATE INDEX IF NOT EXISTS idx_conversations_outcome ON conversations(outcome);
+                        CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
+                    `);
+                    db.exec('COMMIT');
+                    console.log('Database migrated to support new outcome values');
+                } catch (migrationErr) {
+                    db.exec('ROLLBACK');
+                    throw migrationErr;
+                }
             }
+
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_outcome_values')").run();
         }
     } catch (err) {
-        // Migration might fail if already done or table structure changed, that's okay
         console.log('Migration check completed:', err.message);
     }
 
@@ -365,6 +371,15 @@ function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfiden
 }
 
 /**
+ * Get patterns for a specific conversation
+ */
+function getPatternsByConversation(conversationId) {
+    const db = getDb();
+    const patterns = db.prepare('SELECT * FROM successful_patterns WHERE conversation_id = ?').all(conversationId);
+    return patterns.map(p => ({ ...p, messages: JSON.parse(p.messages_json) }));
+}
+
+/**
  * Delete a pattern
  */
 function deletePattern(patternId) {
@@ -501,6 +516,7 @@ module.exports = {
     // Patterns
     createPattern,
     getPattern,
+    getPatternsByConversation,
     listPatterns,
     deletePattern,
     searchSimilarPatterns,
