@@ -628,7 +628,7 @@
         async startConversation() {
             await this.simulateTyping(1200);
             this.addMessage("Hey, I am Milos. Just browsing, or looking to scale profitably with paid ads?", 'bot');
-            this.showReplies(["Yes, I run an e-commerce brand", "Yes, I do lead gen", "Just exploring"]);
+            this.showReplies(["Yes, I run an e-commerce brand", "Yes, I run a Lead Gen Business", "Just exploring"]);
         }
 
         handleInput() {
