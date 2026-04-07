@@ -27,14 +27,6 @@ async function seedIfEmpty() {
         return;
     }
 
-    // Check if we already have seeded content
-    const existing = db.listPatterns({ limit: 1, pattern_type: 'case_study' });
-    if (existing.length > 0) {
-        return; // Already seeded
-    }
-
-    console.log('Seeding knowledge base with structured content...');
-
     const content = [
         // Case studies - Home Services
         ...buildCaseStudies('home_services', [
@@ -44,6 +36,10 @@ async function seedIfEmpty() {
             { client: 'BMS Moving & Storage', industry: 'Moving', result: '70% uplift in SQLs', context: 'Moving company with seasonal demand. Implemented full-funnel Google Ads with Performance Max.' },
             { client: 'Waxxpot', industry: 'Beauty/Wellness', result: '37% increase in online bookings', context: 'Beauty service chain. Optimized Meta Ads and Google local campaigns for appointment bookings.' },
             { client: 'Bitty & Beaus Coffee', industry: 'Restaurant', result: '334% growth in store visits', context: 'Restaurant chain. Used Google local campaigns and Meta Ads to drive foot traffic.' },
+            { client: 'ClubExec Auto', industry: 'Automotive', result: '18% increase in leads', context: 'Automotive service business. Optimized Google Ads for local lead generation.' },
+            { client: 'HookSounds', industry: 'Entertainment', result: '20% boost in CVR', context: 'Entertainment/music licensing platform. Improved conversion rates through landing page optimization and targeted campaigns.' },
+            { client: 'Elevated Diversity', industry: 'Consulting', result: '24% increase in leads', context: 'Consulting firm focused on diversity and inclusion. LinkedIn Ads and Google Ads for B2B lead generation.' },
+            { client: 'Health & Wellness with HBOT', industry: 'Health & Wellness', result: '21% growth in lead volume', context: 'Hyperbaric oxygen therapy provider. Google Ads and local SEO for patient acquisition.' },
         ]),
 
         // Case studies - E-Commerce
@@ -56,6 +52,10 @@ async function seedIfEmpty() {
             { client: 'Toddlekind', industry: 'Baby Products', result: '211% growth in revenue', context: 'Baby products DTC. Advantage+ Shopping + prospecting with UGC creative.' },
             { client: 'Grant Stone', industry: 'Footwear', result: '23% revenue gain', context: 'Premium footwear DTC. Maintained 14x+ ROAS while scaling spend.' },
             { client: 'Goodwear', industry: 'Apparel', result: '49% growth in revenue', context: 'Apparel ecommerce. Creative velocity approach with 15-20 variations weekly.' },
+            { client: 'Williams Athletic Club', industry: 'Sports/Fitness', result: '431% increase in ROAS', context: 'Athletic club ecommerce. Restructured Google and Meta campaigns for maximum return on ad spend.' },
+            { client: 'Black Halo', industry: 'Fashion', result: '37% MoM revenue growth', context: 'Fashion DTC brand. Month-over-month growth through Meta Ads creative testing and Google Shopping optimization. 72% lower CPA.' },
+            { client: 'Green Eco Dream', industry: 'Retail', result: '71% YoY revenue growth', context: 'Eco-friendly retail brand. Year-over-year growth through full-funnel Google and Meta strategy.' },
+            { client: 'FragFlex', industry: 'Fragrance', result: '14% revenue uplift', context: 'Fragrance ecommerce. Google Shopping feed optimization and Performance Max campaigns.' },
         ]),
 
         // Services
@@ -97,8 +97,21 @@ async function seedIfEmpty() {
           content: 'No. We do month-to-month. If we dont perform, you can walk. No hard feelings. We earn your business every month.' },
     ];
 
+    // Check which items already exist (by title match)
+    const existingPatterns = db.listPatterns({ limit: 200, minConfidence: 0 });
+    const existingTitles = new Set(existingPatterns.map(p => p.title));
+
+    const newItems = content.filter(item => !existingTitles.has(item.title));
+
+    if (newItems.length === 0) {
+        console.log(`Knowledge base up to date (${existingPatterns.length} items)`);
+        return;
+    }
+
+    console.log(`Seeding ${newItems.length} new knowledge base items...`);
+
     let seeded = 0;
-    for (const item of content) {
+    for (const item of newItems) {
         try {
             const embedding = await embeddingService.generateEmbeddings(item.content);
             if (embedding) {
@@ -120,7 +133,7 @@ async function seedIfEmpty() {
         }
     }
 
-    console.log(`Knowledge base seeded with ${seeded} items`);
+    console.log(`Knowledge base seeded ${seeded} new items (total: ${existingPatterns.length + seeded})`);
 }
 
 /**
