@@ -40,9 +40,10 @@ class SnowMediaAIChatAgent {
         this.messageHistory = [];
         this.pendingMessage = null;
 
-        // Capture page context and UTM params on load
+        // Capture page context, UTM params, and persistent visitor ID
         this.pageContext = this.capturePageContext();
         this.utmParams = this.captureUtmParams();
+        this.visitorId = this.getOrCreateVisitorId();
 
         // Initialize
         this.bindEvents();
@@ -81,6 +82,15 @@ class SnowMediaAIChatAgent {
             sessionStorage.setItem('snow_chat_session', sessionId);
         }
         return sessionId;
+    }
+
+    getOrCreateVisitorId() {
+        let visitorId = localStorage.getItem('snow_visitor_id');
+        if (!visitorId) {
+            visitorId = 'visitor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('snow_visitor_id', visitorId);
+        }
+        return visitorId;
     }
 
     capturePageContext() {
@@ -195,7 +205,8 @@ class SnowMediaAIChatAgent {
                     message: userMessage,
                     leadData: this.leadData,
                     pageContext: this.pageContext,
-                    utmParams: this.utmParams
+                    utmParams: this.utmParams,
+                    visitorId: this.visitorId
                 })
             });
 

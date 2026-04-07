@@ -333,6 +333,43 @@ function buildTimeContext() {
     return '\n[TIME: Business hours. You can offer to connect them with the team if they are high-intent.]';
 }
 
+/**
+ * Build returning visitor context
+ * @param {Object|null} previousData - Previous conversation data from DB
+ * @returns {string}
+ */
+function buildReturningVisitorContext(previousData) {
+    if (!previousData) return '';
+
+    const parts = [];
+    if (previousData.lead_name) parts.push(`Name: ${previousData.lead_name}`);
+    if (previousData.lead_business_type) parts.push(`Business: ${previousData.lead_business_type}`);
+    if (previousData.lead_email) parts.push(`Email: ${previousData.lead_email}`);
+    if (previousData.outcome) parts.push(`Last outcome: ${previousData.outcome}`);
+    if (previousData.msg_count) parts.push(`Previous messages: ${previousData.msg_count}`);
+
+    if (parts.length === 0) return '';
+
+    return `\n[RETURNING VISITOR: This person has chatted before. ${parts.join(' | ')}. Welcome them back warmly and reference what you know. Don't re-ask questions they already answered. Pick up where they left off.]`;
+}
+
+/**
+ * Build A/B variant context (for prompt variation)
+ * @param {string} variant - 'A' or 'B'
+ * @returns {string}
+ */
+function buildVariantContext(variant) {
+    if (!variant) return '';
+
+    // Variant A: standard opener (control)
+    // Variant B: value-first opener (test)
+    if (variant === 'B') {
+        return '\n[VARIANT B: For your first message, lead with a specific value offer. Example: "Hey, I just helped a [industry] business cut their CPA by 40%. What kind of business do you run?" Make it about them seeing a result, not about you.]';
+    }
+
+    return ''; // Variant A = default behavior (no extra instruction)
+}
+
 module.exports = {
     build,
     buildLeadContext,
@@ -341,5 +378,7 @@ module.exports = {
     getStageGuidance,
     buildPageContext,
     buildUtmContext,
-    buildTimeContext
+    buildTimeContext,
+    buildReturningVisitorContext,
+    buildVariantContext
 };

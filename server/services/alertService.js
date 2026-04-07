@@ -125,6 +125,21 @@ function formatFields(details) {
     if (details.userMessage) {
         fields.push({ name: 'User Message', value: truncate(details.userMessage, 100), inline: false });
     }
+    if (details.leadName) {
+        fields.push({ name: 'Name', value: details.leadName, inline: true });
+    }
+    if (details.leadEmail) {
+        fields.push({ name: 'Email', value: details.leadEmail, inline: true });
+    }
+    if (details.leadBusiness) {
+        fields.push({ name: 'Business', value: details.leadBusiness, inline: true });
+    }
+    if (details.conversationSummary) {
+        fields.push({ name: 'Conversation', value: truncate(details.conversationSummary, 500), inline: false });
+    }
+    if (details.reason) {
+        fields.push({ name: 'Reason', value: details.reason, inline: true });
+    }
     if (details.stack && process.env.NODE_ENV === 'development') {
         fields.push({ name: 'Stack', value: '```' + truncate(details.stack, 500) + '```', inline: false });
     }
@@ -142,6 +157,8 @@ function getColorForType(type) {
         'Database Error': 0xFFFF00,    // Yellow
         'RAG Error': 0xFFA500,         // Orange
         'Lead Capture Error': 0xFF0000, // Red
+        'Human Handoff Requested': 0x0099FF, // Blue
+        'Hot Lead Alert': 0x00FF00,    // Green
         'Rate Limit': 0x808080          // Gray
     };
     return colors[type] || 0xFF0000;
@@ -222,6 +239,16 @@ const alerts = {
     leadCaptureError: (error, context = {}) => sendAlert('Lead Capture Error', {
         message: 'Failed to capture lead data',
         error: error.message,
+        ...context
+    }),
+
+    humanHandoff: (context = {}) => sendAlert('Human Handoff Requested', {
+        message: `A visitor wants to talk to a human or triggered an escalation`,
+        ...context
+    }),
+
+    hotLead: (context = {}) => sendAlert('Hot Lead Alert', {
+        message: `High-value lead detected in chat`,
         ...context
     }),
 

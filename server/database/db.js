@@ -43,6 +43,25 @@ async function initialize() {
     const schema = fs.readFileSync(schemaPath, 'utf8');
     db.exec(schema);
 
+    // Migration: Add session_state, visitor_id, prompt_variant columns
+    try {
+        const hasSessionState = db.prepare("SELECT 1 FROM pragma_table_info('conversations') WHERE name = 'session_state'").get();
+        if (!hasSessionState) {
+            db.exec(`
+                ALTER TABLE conversations ADD COLUMN session_state TEXT;
+                ALTER TABLE conversations ADD COLUMN visitor_id TEXT;
+                ALTER TABLE conversations ADD COLUMN prompt_variant TEXT;
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_visitor ON conversations(visitor_id)`);
+            console.log('Added session_state, visitor_id, prompt_variant columns');
+        }
+    } catch (err) {
+        // Columns may already exist
+        if (!err.message.includes('duplicate column')) {
+            console.log('Column migration note:', err.message);
+        }
+    }
+
     // Migration: Add new outcome values to conversations table
     // SQLite doesn't support ALTER CHECK constraint, so we recreate the table
     // Only run once — tracked via a migrations meta table
@@ -452,6 +471,81 @@ function patternExistsForConversation(conversationId) {
 }
 
 // ============================================
+// SESSION STATE PERSISTENCE
+// ============================================
+
+/**
+ * Save session state to database (survives restarts)
+ */
+function saveSessionState(sessionId, state) {
+    const db = getDb();
+    const stateJson = JSON.stringify(state);
+    db.prepare('UPDATE conversations SET session_state = ? WHERE id = ?').run(stateJson, sessionId);
+}
+
+/**
+ * Load session state from database
+ */
+function loadSessionState(sessionId) {
+    const db = getDb();
+    const row = db.prepare('SELECT session_state FROM conversations WHERE id = ?').get(sessionId);
+    if (row && row.session_state) {
+        try {
+            return JSON.parse(row.session_state);
+        } catch (e) {
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Set visitor_id and prompt_variant on a conversation
+ */
+function setConversationMeta(sessionId, visitorId, promptVariant) {
+    const db = getDb();
+    db.prepare('UPDATE conversations SET visitor_id = ?, prompt_variant = ? WHERE id = ?')
+        .run(visitorId, promptVariant, sessionId);
+}
+
+/**
+ * Find previous conversations for a visitor (for returning visitor recognition)
+ * Returns the most recent conversation with captured lead data
+ */
+function findPreviousVisitorData(visitorId) {
+    if (!visitorId) return null;
+    const db = getDb();
+    return db.prepare(`
+        SELECT id, lead_name, lead_email, lead_phone, lead_business_type, outcome, session_state,
+               (SELECT COUNT(*) FROM messages WHERE conversation_id = conversations.id) as msg_count
+        FROM conversations
+        WHERE visitor_id = ?
+        AND (lead_name IS NOT NULL OR lead_email IS NOT NULL OR lead_business_type IS NOT NULL)
+        ORDER BY updated_at DESC
+        LIMIT 1
+    `).get(visitorId);
+}
+
+/**
+ * Get conversation count per prompt variant (for A/B testing analytics)
+ */
+function getVariantStats() {
+    const db = getDb();
+    return db.prepare(`
+        SELECT
+            prompt_variant,
+            COUNT(*) as total,
+            SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN outcome = 'contact_captured' THEN 1 ELSE 0 END) as contact_captured,
+            SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) as abandoned,
+            AVG(message_count) as avg_messages
+        FROM conversations
+        WHERE prompt_variant IS NOT NULL
+        GROUP BY prompt_variant
+    `).all();
+}
+
+// ============================================
 // UTILITY FUNCTIONS
 // ============================================
 
@@ -521,6 +615,13 @@ module.exports = {
     deletePattern,
     searchSimilarPatterns,
     patternExistsForConversation,
+
+    // Session persistence
+    saveSessionState,
+    loadSessionState,
+    setConversationMeta,
+    findPreviousVisitorData,
+    getVariantStats,
 
     // Utility
     getStats,

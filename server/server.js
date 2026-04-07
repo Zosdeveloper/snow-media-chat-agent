@@ -89,7 +89,7 @@ setInterval(() => {
 // Chat endpoint with rate limiting
 app.post('/api/chat', chatLimiter, async (req, res) => {
     try {
-        const { sessionId, message, leadData, pageContext, utmParams } = req.body;
+        const { sessionId, message, leadData, pageContext, utmParams, visitorId } = req.body;
 
         if (!message || !sessionId) {
             return res.status(400).json({ error: 'Missing required fields' });
@@ -104,16 +104,52 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             return res.status(400).json({ error: 'Invalid session ID' });
         }
 
-        // Get or create session
+        // Get or create session (check in-memory first, then DB, then create new)
         let session = sessions.get(sessionId);
+        let isReturningVisitor = false;
+        let previousVisitorData = null;
+
         if (!session) {
-            session = {
-                messages: [],
-                leadData: leadData || {},
-                pageContext: pageContext || {},
-                utmParams: utmParams || null,
-                lastActivity: Date.now()
-            };
+            // Try to restore from database (survives restarts)
+            const savedState = db.loadSessionState(sessionId);
+            if (savedState) {
+                session = {
+                    ...savedState,
+                    lastActivity: Date.now()
+                };
+                // Restore messages from DB
+                const dbMessages = db.getMessages(sessionId);
+                session.messages = dbMessages.map(m => ({ role: m.role, content: m.content }));
+                console.log(`Restored session ${sessionId} from DB (${session.messages.length} messages)`);
+            } else {
+                // Brand new session
+                // Assign A/B variant (50/50 split)
+                const promptVariant = Math.random() < 0.5 ? 'A' : 'B';
+
+                session = {
+                    messages: [],
+                    leadData: leadData || {},
+                    pageContext: pageContext || {},
+                    utmParams: utmParams || null,
+                    visitorId: visitorId || null,
+                    promptVariant,
+                    lastActivity: Date.now()
+                };
+
+                // Check for returning visitor
+                if (visitorId) {
+                    previousVisitorData = db.findPreviousVisitorData(visitorId);
+                    if (previousVisitorData) {
+                        isReturningVisitor = true;
+                        // Pre-fill lead data from previous visit
+                        if (previousVisitorData.lead_name) session.leadData.name = previousVisitorData.lead_name;
+                        if (previousVisitorData.lead_email) session.leadData.email = previousVisitorData.lead_email;
+                        if (previousVisitorData.lead_phone) session.leadData.phone = previousVisitorData.lead_phone;
+                        if (previousVisitorData.lead_business_type) session.leadData.businessType = previousVisitorData.lead_business_type;
+                        console.log(`Returning visitor detected: ${visitorId} (previous: ${previousVisitorData.id})`);
+                    }
+                }
+            }
             sessions.set(sessionId, session);
         }
 
@@ -122,6 +158,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         session.leadData = { ...session.leadData, ...leadData };
         if (pageContext) session.pageContext = pageContext;
         if (utmParams) session.utmParams = utmParams;
+        if (visitorId) session.visitorId = visitorId;
 
         // Persist to database (fire and forget)
         try {
@@ -132,6 +169,10 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                 lead_phone: session.leadData.phone,
                 lead_business_type: session.leadData.businessType || session.leadData.business
             });
+            // Save visitor_id and prompt_variant
+            if (session.visitorId || session.promptVariant) {
+                db.setConversationMeta(sessionId, session.visitorId, session.promptVariant);
+            }
         } catch (err) {
             console.error('Error persisting conversation:', err.message);
         }
@@ -159,6 +200,14 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         contextMessage += promptBuilder.buildPageContext(session.pageContext);
         contextMessage += promptBuilder.buildUtmContext(session.utmParams);
         contextMessage += promptBuilder.buildTimeContext();
+
+        // Add returning visitor context if applicable
+        if (isReturningVisitor && previousVisitorData) {
+            contextMessage += promptBuilder.buildReturningVisitorContext(previousVisitorData);
+        }
+
+        // Add A/B variant context
+        contextMessage += promptBuilder.buildVariantContext(session.promptVariant);
 
         // Add conversation stage guidance
         contextMessage += promptBuilder.getStageGuidance(session);
@@ -249,9 +298,25 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             });
         }
 
+        // Human handoff detection
+        detectHandoffTriggers(message, session, sessionId);
+
         // Keep conversation history manageable (last 20 messages)
         if (session.messages.length > config.session.maxMessages) {
             session.messages = session.messages.slice(-config.session.maxMessages);
+        }
+
+        // Persist session state to DB (survives restarts)
+        try {
+            db.saveSessionState(sessionId, {
+                leadData: session.leadData,
+                pageContext: session.pageContext,
+                utmParams: session.utmParams,
+                visitorId: session.visitorId,
+                promptVariant: session.promptVariant
+            });
+        } catch (err) {
+            console.error('Error saving session state:', err.message);
         }
 
         res.json({
@@ -319,6 +384,67 @@ function extractLeadData(message, existingData) {
     }
 
     return extracted;
+}
+
+// Human handoff detection
+function detectHandoffTriggers(message, session, sessionId) {
+    const lower = message.toLowerCase();
+    const leadData = session.leadData || {};
+
+    // Build conversation summary for the alert
+    function getConversationSummary() {
+        const recent = (session.messages || []).slice(-6);
+        return recent.map(m => `${m.role}: ${m.content.substring(0, 120)}`).join('\n');
+    }
+
+    const alertContext = {
+        sessionId,
+        leadName: leadData.name || 'Unknown',
+        leadEmail: leadData.email || 'Not captured',
+        leadBusiness: leadData.businessType || leadData.business || 'Unknown',
+        conversationSummary: getConversationSummary()
+    };
+
+    // Trigger 1: Explicit request for human
+    const humanPhrases = [
+        'talk to a human', 'talk to a person', 'real person', 'speak to someone',
+        'talk to someone', 'human agent', 'real agent', 'can i call', 'phone number',
+        'speak with milos', 'talk to milos', 'connect me'
+    ];
+    if (humanPhrases.some(p => lower.includes(p))) {
+        alerts.humanHandoff({ ...alertContext, reason: 'Explicit request for human' });
+        return;
+    }
+
+    // Trigger 2: Frustration detection (short negative messages)
+    const userMessages = (session.messages || []).filter(m => m.role === 'user');
+    const recentUserMsgs = userMessages.slice(-3);
+    if (recentUserMsgs.length >= 3) {
+        const frustrationSignals = recentUserMsgs.filter(m => {
+            const msg = m.content.toLowerCase();
+            return (
+                m.content.length < 30 &&
+                (msg.includes('no') || msg.includes('stop') || msg.includes('not helpful') ||
+                 msg.includes('useless') || msg.includes('waste') || msg.includes('annoying') ||
+                 msg.includes("doesn't help") || msg.includes("don't understand") ||
+                 m.content === m.content.toUpperCase() && m.content.length > 3) // ALL CAPS
+            );
+        });
+        if (frustrationSignals.length >= 2) {
+            alerts.humanHandoff({ ...alertContext, reason: 'Frustration detected (2+ negative signals)' });
+            return;
+        }
+    }
+
+    // Trigger 3: High-value signals
+    const highValuePatterns = [
+        /\b(?:50|100|200|500)\+?\s*(?:employees|staff|people|team)/i,
+        /\b(?:\$?\d{2,3}k|\$\d{5,})\s*(?:per|a|\/)\s*month/i,
+        /\b(?:10|15|20|25|30|50|100)\s*(?:locations?|stores?|branches)/i
+    ];
+    if (highValuePatterns.some(p => p.test(message))) {
+        alerts.hotLead({ ...alertContext, reason: 'High-value signal detected in message' });
+    }
 }
 
 // Lead submission endpoint
