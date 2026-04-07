@@ -45,6 +45,15 @@ class SnowMediaAIChatAgent {
         this.utmParams = this.captureUtmParams();
         this.visitorId = this.getOrCreateVisitorId();
 
+        // Behavior tracking
+        this.behaviorSignals = {
+            timeOnPage: 0,
+            maxScrollDepth: 0,
+            pagesViewed: this.trackPageView(),
+            entryPage: window.location.pathname
+        };
+        this.startBehaviorTracking();
+
         // Initialize
         this.bindEvents();
         if (this.config.autoOpen) {
@@ -110,6 +119,38 @@ class SnowMediaAIChatAgent {
             if (val) utms[key] = val;
         }
         return Object.keys(utms).length > 0 ? utms : null;
+    }
+
+    trackPageView() {
+        const key = 'snow_pages_viewed';
+        const pages = JSON.parse(sessionStorage.getItem(key) || '[]');
+        const current = window.location.pathname;
+        if (!pages.includes(current)) {
+            pages.push(current);
+            sessionStorage.setItem(key, JSON.stringify(pages));
+        }
+        return pages.length;
+    }
+
+    startBehaviorTracking() {
+        // Track time on page (update every 10s)
+        const pageLoadTime = Date.now();
+        this._timeInterval = setInterval(() => {
+            this.behaviorSignals.timeOnPage = Math.round((Date.now() - pageLoadTime) / 1000);
+        }, 10000);
+
+        // Track scroll depth
+        const onScroll = () => {
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+            if (docHeight > 0) {
+                const depth = Math.round((scrollTop / docHeight) * 100);
+                if (depth > this.behaviorSignals.maxScrollDepth) {
+                    this.behaviorSignals.maxScrollDepth = depth;
+                }
+            }
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
     }
 
     bindEvents() {
@@ -206,7 +247,8 @@ class SnowMediaAIChatAgent {
                     leadData: this.leadData,
                     pageContext: this.pageContext,
                     utmParams: this.utmParams,
-                    visitorId: this.visitorId
+                    visitorId: this.visitorId,
+                    behaviorSignals: this.behaviorSignals
                 })
             });
 

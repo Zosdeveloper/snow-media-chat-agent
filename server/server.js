@@ -21,6 +21,7 @@ const adminRoutes = require('./routes/admin');
 const config = require('./config');
 const alerts = require('./services/alertService');
 const SYSTEM_PROMPT = require('./prompts/systemPrompt');
+const knowledgeBase = require('./services/knowledgeBase');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -89,7 +90,7 @@ setInterval(() => {
 // Chat endpoint with rate limiting
 app.post('/api/chat', chatLimiter, async (req, res) => {
     try {
-        const { sessionId, message, leadData, pageContext, utmParams, visitorId } = req.body;
+        const { sessionId, message, leadData, pageContext, utmParams, visitorId, behaviorSignals } = req.body;
 
         if (!message || !sessionId) {
             return res.status(400).json({ error: 'Missing required fields' });
@@ -159,6 +160,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         if (pageContext) session.pageContext = pageContext;
         if (utmParams) session.utmParams = utmParams;
         if (visitorId) session.visitorId = visitorId;
+        if (behaviorSignals) session.behaviorSignals = behaviorSignals;
 
         // Persist to database (fire and forget)
         try {
@@ -201,6 +203,9 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         contextMessage += promptBuilder.buildUtmContext(session.utmParams);
         contextMessage += promptBuilder.buildTimeContext();
 
+        // Add behavior signals context
+        contextMessage += promptBuilder.buildBehaviorContext(session.behaviorSignals);
+
         // Add returning visitor context if applicable
         if (isReturningVisitor && previousVisitorData) {
             contextMessage += promptBuilder.buildReturningVisitorContext(previousVisitorData);
@@ -232,16 +237,134 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             return msg;
         });
 
-        // Call Claude API with enriched prompt
+        // Claude tool definitions
+        const tools = [
+            {
+                name: 'show_booking_calendar',
+                description: 'Show the Calendly booking widget when the visitor is ready to schedule a call. Use this instead of writing [BOOK_CALL] in your message.',
+                input_schema: {
+                    type: 'object',
+                    properties: {},
+                    required: []
+                }
+            },
+            {
+                name: 'offer_quick_replies',
+                description: 'Show clickable quick reply buttons below your message. Use when offering 2-3 clear options helps move the conversation forward.',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        options: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Array of 2-3 short reply options',
+                            maxItems: 3
+                        }
+                    },
+                    required: ['options']
+                }
+            },
+            {
+                name: 'capture_lead_field',
+                description: 'Record a piece of lead info the visitor shared (name, email, phone, business type). Call this whenever you detect contact information in their message.',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        field: {
+                            type: 'string',
+                            enum: ['name', 'email', 'phone', 'business_type']
+                        },
+                        value: { type: 'string' }
+                    },
+                    required: ['field', 'value']
+                }
+            },
+            {
+                name: 'suggest_resource',
+                description: 'Offer a specific free resource as a lead magnet to exchange for their email. Use when pivoting to capture their email address.',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        resource_name: {
+                            type: 'string',
+                            description: 'Name of the resource, e.g. "Home Services Ad Benchmark Report"'
+                        },
+                        resource_type: {
+                            type: 'string',
+                            enum: ['benchmark_report', 'calculator', 'playbook', 'checklist', 'comparison_guide']
+                        }
+                    },
+                    required: ['resource_name']
+                }
+            }
+        ];
+
+        // Call Claude API with tools
         const response = await anthropic.messages.create({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 500,
             system: enrichedPrompt,
-            messages: messagesForClaude
+            messages: messagesForClaude,
+            tools,
+            tool_choice: { type: 'auto' }
         });
 
-        // Extract response text
-        let assistantMessage = response.content[0].text;
+        // Process response: extract text and tool calls
+        let assistantMessage = '';
+        let quickReplies = [];
+        let showBookingCalendar = false;
+        let suggestedResource = null;
+
+        for (const block of response.content) {
+            if (block.type === 'text') {
+                assistantMessage = block.text;
+            } else if (block.type === 'tool_use') {
+                switch (block.name) {
+                    case 'show_booking_calendar':
+                        showBookingCalendar = true;
+                        break;
+                    case 'offer_quick_replies':
+                        if (block.input.options) {
+                            quickReplies = block.input.options.slice(0, 3);
+                        }
+                        break;
+                    case 'capture_lead_field':
+                        if (block.input.field && block.input.value) {
+                            const fieldMap = {
+                                name: 'name',
+                                email: 'email',
+                                phone: 'phone',
+                                business_type: 'businessType'
+                            };
+                            const key = fieldMap[block.input.field];
+                            if (key) {
+                                session.leadData[key] = block.input.value;
+                            }
+                        }
+                        break;
+                    case 'suggest_resource':
+                        suggestedResource = block.input;
+                        break;
+                }
+            }
+        }
+
+        // Inject booking calendar marker for widget (if tool was called)
+        if (showBookingCalendar && !assistantMessage.includes('[BOOK_CALL]')) {
+            assistantMessage = assistantMessage.trim() + ' [BOOK_CALL]';
+        }
+
+        // Fallback: also parse legacy tokens in case model still uses them
+        if (!showBookingCalendar && assistantMessage.includes('[BOOK_CALL]')) {
+            showBookingCalendar = true;
+        }
+        if (quickReplies.length === 0) {
+            const legacyMatch = assistantMessage.match(/\[QUICK_REPLIES:\s*"([^"]+)"(?:,\s*"([^"]+)")?(?:,\s*"([^"]+)")?\]/);
+            if (legacyMatch) {
+                quickReplies = legacyMatch.slice(1).filter(Boolean);
+                assistantMessage = assistantMessage.replace(/\[QUICK_REPLIES:.*?\]/g, '').trim();
+            }
+        }
 
         // Output validation - flag potentially hallucinated content
         const suspiciousPatterns = [
@@ -254,28 +377,20 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         for (const { pattern, reason } of suspiciousPatterns) {
             if (pattern.test(assistantMessage)) {
                 console.warn(`[FLAGGED RESPONSE] ${reason}:`, assistantMessage.substring(0, 200));
-                // In production, you might want to send this to a monitoring service
             }
         }
 
-        // Parse quick replies if present
-        let quickReplies = [];
-        const quickReplyMatch = assistantMessage.match(/\[QUICK_REPLIES:\s*"([^"]+)"(?:,\s*"([^"]+)")?(?:,\s*"([^"]+)")?\]/);
-        if (quickReplyMatch) {
-            quickReplies = quickReplyMatch.slice(1).filter(Boolean);
-            assistantMessage = assistantMessage.replace(/\[QUICK_REPLIES:.*?\]/g, '').trim();
-        }
-
-        // Detect if asking for contact info
+        // Also run regex-based lead extraction as backup
         const extractedData = extractLeadData(message, session.leadData);
         if (Object.keys(extractedData).length > 0) {
             session.leadData = { ...session.leadData, ...extractedData };
-            // Update lead data in database
-            try {
-                db.updateConversationLeadData(sessionId, session.leadData);
-            } catch (err) {
-                console.error('Error updating lead data:', err.message);
-            }
+        }
+
+        // Persist any lead data updates
+        try {
+            db.updateConversationLeadData(sessionId, session.leadData);
+        } catch (err) {
+            console.error('Error updating lead data:', err.message);
         }
 
         // Add assistant message to history
@@ -319,12 +434,18 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             console.error('Error saving session state:', err.message);
         }
 
-        res.json({
+        const responsePayload = {
             message: assistantMessage,
             quickReplies,
             leadData: session.leadData,
             sessionId
-        });
+        };
+
+        if (suggestedResource) {
+            responsePayload.suggestedResource = suggestedResource;
+        }
+
+        res.json(responsePayload);
 
     } catch (error) {
         console.error('Chat error:', error);
@@ -528,6 +649,10 @@ async function startServer() {
         // Check if embedding service is available
         if (embeddingService.isAvailable()) {
             console.log('Voyage AI embedding service configured');
+            // Seed knowledge base with structured content on first boot
+            knowledgeBase.seedIfEmpty().catch(err => {
+                console.error('Knowledge base seeding error:', err.message);
+            });
         } else {
             console.log('Warning: VOYAGE_API_KEY not set, RAG features disabled');
         }

@@ -334,6 +334,43 @@ function buildTimeContext() {
 }
 
 /**
+ * Build behavior signals context
+ * @param {Object} signals - { timeOnPage, maxScrollDepth, pagesViewed, entryPage }
+ * @returns {string}
+ */
+function buildBehaviorContext(signals) {
+    if (!signals) return '';
+
+    const parts = [];
+
+    if (signals.timeOnPage > 0) {
+        parts.push(`${signals.timeOnPage}s on page`);
+    }
+    if (signals.maxScrollDepth > 0) {
+        parts.push(`${signals.maxScrollDepth}% scrolled`);
+    }
+    if (signals.pagesViewed > 1) {
+        parts.push(`${signals.pagesViewed} pages viewed this session`);
+    }
+
+    if (parts.length === 0) return '';
+
+    // Determine intent level
+    let intentHint = '';
+    const highIntent = (signals.timeOnPage > 180 && signals.pagesViewed >= 3) ||
+                       (signals.maxScrollDepth > 75 && signals.pagesViewed >= 2);
+    const mediumIntent = signals.timeOnPage > 60 || signals.pagesViewed >= 2 || signals.maxScrollDepth > 50;
+
+    if (highIntent) {
+        intentHint = 'HIGH INTENT visitor. They have been researching. Be more direct, push toward booking.';
+    } else if (mediumIntent) {
+        intentHint = 'Engaged visitor. They are actively exploring.';
+    }
+
+    return `\n[BEHAVIOR: ${parts.join(', ')}. ${intentHint}]`;
+}
+
+/**
  * Build returning visitor context
  * @param {Object|null} previousData - Previous conversation data from DB
  * @returns {string}
@@ -379,6 +416,7 @@ module.exports = {
     buildPageContext,
     buildUtmContext,
     buildTimeContext,
+    buildBehaviorContext,
     buildReturningVisitorContext,
     buildVariantContext
 };
