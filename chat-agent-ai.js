@@ -169,11 +169,36 @@ class SnowMediaAIChatAgent {
     }
 
     scheduleAutoOpen() {
+        const delay = this.getPageSpecificDelay();
         setTimeout(() => {
             if (!this.isOpen) {
                 this.toggleChat();
             }
-        }, this.config.autoOpenDelay);
+        }, delay);
+
+        // Exit intent trigger (mouse leaves viewport on desktop)
+        if (window.matchMedia('(pointer: fine)').matches) {
+            let exitTriggered = false;
+            document.addEventListener('mouseout', (e) => {
+                if (exitTriggered || this.isOpen) return;
+                if (e.clientY <= 0 && e.relatedTarget === null) {
+                    exitTriggered = true;
+                    this.toggleChat();
+                }
+            });
+        }
+    }
+
+    getPageSpecificDelay() {
+        const path = window.location.pathname.toLowerCase();
+        if (path.includes('/contact')) return 2000;
+        if (path.includes('/pricing') || path.includes('/plans')) return 17000;
+        if (path.includes('/services/')) return 35000;
+        if (path.includes('/services')) return 30000;
+        if (path.includes('/case-stud')) return 25000;
+        if (path.includes('/blog') || path.includes('/resources') || path.includes('/ai-tools')) return 60000;
+        if (path.includes('/about') || path.includes('/approach')) return 20000;
+        return this.config.autoOpenDelay;
     }
 
     toggleChat() {

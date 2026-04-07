@@ -514,6 +514,63 @@ router.get('/analytics', (req, res) => {
 });
 
 /**
+ * GET /api/admin/ab-test
+ * Get A/B test variant performance comparison
+ */
+router.get('/ab-test', (req, res) => {
+    try {
+        const variantStats = db.getVariantStats();
+
+        // Format for easy comparison
+        const variants = {};
+        for (const row of variantStats) {
+            if (!row.prompt_variant) continue;
+            const total = row.total || 1;
+            variants[row.prompt_variant] = {
+                total: row.total,
+                converted: row.converted || 0,
+                contact_captured: row.contact_captured || 0,
+                abandoned: row.abandoned || 0,
+                avg_messages: row.avg_messages ? Math.round(row.avg_messages * 10) / 10 : 0,
+                conversion_rate: ((row.converted || 0) / total * 100).toFixed(1) + '%',
+                contact_rate: ((row.contact_captured || 0) / total * 100).toFixed(1) + '%',
+                abandon_rate: ((row.abandoned || 0) / total * 100).toFixed(1) + '%'
+            };
+        }
+
+        const hasEnoughData = Object.values(variants).every(v => v.total >= 50);
+
+        res.json({
+            variants,
+            hasEnoughData,
+            recommendation: hasEnoughData
+                ? getABRecommendation(variants)
+                : `Need more data. ${Object.values(variants).map(v => v.total).join(' and ')} conversations so far. Target: 50+ per variant.`
+        });
+    } catch (error) {
+        console.error('Error getting A/B test stats:', error.message);
+        res.status(500).json({ error: 'Failed to get A/B test stats' });
+    }
+});
+
+function getABRecommendation(variants) {
+    const a = variants['A'];
+    const b = variants['B'];
+    if (!a || !b) return 'Missing variant data.';
+
+    const aRate = parseFloat(a.conversion_rate);
+    const bRate = parseFloat(b.conversion_rate);
+    const aContact = parseFloat(a.contact_rate);
+    const bContact = parseFloat(b.contact_rate);
+
+    if (bRate > aRate + 5) return `Variant B (value-first opener) is winning on conversions: ${b.conversion_rate} vs ${a.conversion_rate}. Consider making B the default.`;
+    if (aRate > bRate + 5) return `Variant A (standard opener) is winning on conversions: ${a.conversion_rate} vs ${b.conversion_rate}. Consider dropping B.`;
+    if (bContact > aContact + 5) return `Variant B captures more contacts: ${b.contact_rate} vs ${a.contact_rate}. Close on conversions though.`;
+
+    return `No significant winner yet. A: ${a.conversion_rate} conversion, B: ${b.conversion_rate} conversion. Keep testing.`;
+}
+
+/**
  * GET /api/admin/health
  * Admin health check with more details
  */

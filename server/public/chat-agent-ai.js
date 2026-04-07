@@ -171,11 +171,50 @@ class SnowMediaAIChatAgent {
     }
 
     scheduleAutoOpen() {
+        const delay = this.getPageSpecificDelay();
         setTimeout(() => {
             if (!this.isOpen) {
                 this.toggleChat();
             }
-        }, this.config.autoOpenDelay);
+        }, delay);
+
+        // Exit intent trigger (mouse leaves viewport on desktop)
+        if (window.matchMedia('(pointer: fine)').matches) {
+            let exitTriggered = false;
+            document.addEventListener('mouseout', (e) => {
+                if (exitTriggered || this.isOpen) return;
+                if (e.clientY <= 0 && e.relatedTarget === null) {
+                    exitTriggered = true;
+                    this.toggleChat();
+                }
+            });
+        }
+    }
+
+    getPageSpecificDelay() {
+        const path = window.location.pathname.toLowerCase();
+
+        // Contact page: fast trigger, they want to talk
+        if (path.includes('/contact')) return 2000;
+
+        // Pricing/plans: they're evaluating, trigger at 15-20s
+        if (path.includes('/pricing') || path.includes('/plans')) return 17000;
+
+        // Service pages: let them read a bit, 30-45s
+        if (path.includes('/services/')) return 35000;
+        if (path.includes('/services')) return 30000;
+
+        // Case studies: engaged, 25-30s
+        if (path.includes('/case-stud')) return 25000;
+
+        // Blog/resources: don't interrupt, 60s+
+        if (path.includes('/blog') || path.includes('/resources') || path.includes('/ai-tools')) return 60000;
+
+        // About/approach: medium interest, 20s
+        if (path.includes('/about') || path.includes('/approach')) return 20000;
+
+        // Homepage/default: standard 3s (original behavior)
+        return this.config.autoOpenDelay;
     }
 
     toggleChat() {

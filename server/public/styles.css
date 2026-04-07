@@ -566,18 +566,105 @@ body {
     box-shadow: var(--shadow-md);
 }
 
-/* Responsive */
+/* Responsive - Mobile Optimized */
 @media (max-width: 480px) {
     .chat-widget {
-        bottom: 16px;
-        right: 16px;
+        bottom: 12px;
+        right: 12px;
     }
 
     .chat-container {
-        width: calc(100vw - 32px);
-        height: calc(100vh - 120px);
-        max-height: 600px;
-        right: 0;
+        width: calc(100vw - 24px);
+        height: calc(100vh - 100px);
+        max-height: none;
+        right: -6px;
+        bottom: 72px;
+        border-radius: var(--radius-md);
+    }
+
+    .chat-toggle {
+        width: 60px;
+        height: 60px;
+    }
+
+    .chat-header {
+        padding: 12px 16px;
+    }
+
+    .avatar {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+    }
+
+    .header-text h3 {
+        font-size: 14px;
+    }
+
+    .chat-messages {
+        padding: 14px;
+        gap: 12px;
+    }
+
+    .message {
+        max-width: 90%;
+    }
+
+    .message-content {
+        padding: 10px 14px;
+        font-size: 14px;
+    }
+
+    /* Larger tap targets for quick replies */
+    .quick-replies {
+        padding: 10px 14px 14px;
+        gap: 8px;
+    }
+
+    .quick-reply-btn {
+        padding: 12px 16px;
+        font-size: 13px;
+        min-height: 44px; /* Apple recommended minimum tap target */
+    }
+
+    /* Larger input area */
+    .chat-input-container {
+        padding: 12px 14px;
+        gap: 8px;
+    }
+
+    .chat-input {
+        padding: 12px 14px;
+        font-size: 16px; /* Prevents iOS zoom on focus */
+    }
+
+    .send-btn {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+    }
+
+    /* Book call button - full width on mobile */
+    .book-call-btn {
+        display: block;
+        width: 100%;
+        text-align: center;
+        padding: 14px 20px;
+        font-size: 15px;
+        min-height: 44px;
+    }
+}
+
+/* Small phone screens */
+@media (max-width: 360px) {
+    .chat-container {
+        width: calc(100vw - 16px);
+        right: -4px;
+    }
+
+    .quick-reply-btn {
+        padding: 10px 14px;
+        font-size: 12px;
     }
 }
 
