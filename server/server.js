@@ -89,7 +89,7 @@ setInterval(() => {
 // Chat endpoint with rate limiting
 app.post('/api/chat', chatLimiter, async (req, res) => {
     try {
-        const { sessionId, message, leadData } = req.body;
+        const { sessionId, message, leadData, pageContext, utmParams } = req.body;
 
         if (!message || !sessionId) {
             return res.status(400).json({ error: 'Missing required fields' });
@@ -110,6 +110,8 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             session = {
                 messages: [],
                 leadData: leadData || {},
+                pageContext: pageContext || {},
+                utmParams: utmParams || null,
                 lastActivity: Date.now()
             };
             sessions.set(sessionId, session);
@@ -118,6 +120,8 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // Update session
         session.lastActivity = Date.now();
         session.leadData = { ...session.leadData, ...leadData };
+        if (pageContext) session.pageContext = pageContext;
+        if (utmParams) session.utmParams = utmParams;
 
         // Persist to database (fire and forget)
         try {
@@ -150,6 +154,11 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         if (Object.keys(session.leadData).length > 0) {
             contextMessage = promptBuilder.buildLeadContext(session.leadData);
         }
+
+        // Add page context, UTM context, and time-of-day context
+        contextMessage += promptBuilder.buildPageContext(session.pageContext);
+        contextMessage += promptBuilder.buildUtmContext(session.utmParams);
+        contextMessage += promptBuilder.buildTimeContext();
 
         // Add conversation stage guidance
         contextMessage += promptBuilder.getStageGuidance(session);

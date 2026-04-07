@@ -40,6 +40,10 @@ class SnowMediaAIChatAgent {
         this.messageHistory = [];
         this.pendingMessage = null;
 
+        // Capture page context and UTM params on load
+        this.pageContext = this.capturePageContext();
+        this.utmParams = this.captureUtmParams();
+
         // Initialize
         this.bindEvents();
         if (this.config.autoOpen) {
@@ -77,6 +81,25 @@ class SnowMediaAIChatAgent {
             sessionStorage.setItem('snow_chat_session', sessionId);
         }
         return sessionId;
+    }
+
+    capturePageContext() {
+        return {
+            url: window.location.pathname,
+            title: document.title,
+            referrer: document.referrer
+        };
+    }
+
+    captureUtmParams() {
+        const params = new URLSearchParams(window.location.search);
+        const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
+        const utms = {};
+        for (const key of utmKeys) {
+            const val = params.get(key);
+            if (val) utms[key] = val;
+        }
+        return Object.keys(utms).length > 0 ? utms : null;
     }
 
     bindEvents() {
@@ -170,7 +193,9 @@ class SnowMediaAIChatAgent {
                 body: JSON.stringify({
                     sessionId: this.sessionId,
                     message: userMessage,
-                    leadData: this.leadData
+                    leadData: this.leadData,
+                    pageContext: this.pageContext,
+                    utmParams: this.utmParams
                 })
             });
 
@@ -186,8 +211,10 @@ class SnowMediaAIChatAgent {
                 this.onLeadDataUpdate(this.leadData);
             }
 
-            // Simulate natural typing delay based on message length
-            const typingDelay = Math.min(1000 + (data.message.length * 20), 3000);
+            // Simulate natural typing delay (1.5-3s, scaled by length)
+            const baseDelay = 1500;
+            const lengthFactor = Math.min(data.message.length / 80, 1);
+            const typingDelay = baseDelay + (lengthFactor * 1500);
             await this.delay(typingDelay);
 
             this.hideTypingIndicator();

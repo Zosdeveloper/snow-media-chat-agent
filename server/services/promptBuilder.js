@@ -206,10 +206,140 @@ function getStageGuidance(session) {
     return result;
 }
 
+/**
+ * Build page context string for the prompt
+ * @param {Object} pageContext - { url, title, referrer }
+ * @returns {string}
+ */
+function buildPageContext(pageContext) {
+    if (!pageContext || !pageContext.url) return '';
+
+    const url = pageContext.url.toLowerCase();
+    let pageType = 'homepage';
+    let hint = '';
+
+    if (url.includes('/services/google-ads')) {
+        pageType = 'Google Ads service page';
+        hint = 'They are interested in Google Ads. Reference Google Ads results if relevant.';
+    } else if (url.includes('/services/meta-ads')) {
+        pageType = 'Meta Ads service page';
+        hint = 'They are interested in Meta Ads. Reference Meta/Facebook Ads results if relevant.';
+    } else if (url.includes('/services/microsoft-ads')) {
+        pageType = 'Microsoft Ads service page';
+        hint = 'They are interested in Microsoft Ads. Mention 35% lower CPCs vs Google.';
+    } else if (url.includes('/services/linkedin-ads')) {
+        pageType = 'LinkedIn Ads service page';
+        hint = 'They are interested in LinkedIn Ads. Good B2B signal.';
+    } else if (url.includes('/services/ai-automations')) {
+        pageType = 'AI Automations service page';
+        hint = 'They are interested in AI automation.';
+    } else if (url.includes('/services/ai-agents')) {
+        pageType = 'AI Agents service page';
+        hint = 'They are interested in AI agents for their business.';
+    } else if (url.includes('/services/cro')) {
+        pageType = 'CRO service page';
+        hint = 'They are interested in conversion rate optimization.';
+    } else if (url.includes('/services/local-seo')) {
+        pageType = 'Local SEO service page';
+        hint = 'They are interested in local SEO. Likely a local/service business.';
+    } else if (url.includes('/services/brand-strategy')) {
+        pageType = 'Brand Strategy service page';
+        hint = 'They are interested in brand strategy and positioning.';
+    } else if (url.includes('/services/web-development')) {
+        pageType = 'Web Development service page';
+        hint = 'They are interested in web development.';
+    } else if (url.includes('/services')) {
+        pageType = 'services overview page';
+        hint = 'They are browsing services. Ask which one caught their eye.';
+    } else if (url.includes('/case-studies')) {
+        pageType = 'case studies page';
+        hint = 'They are looking at results. High intent. Reference specific case studies.';
+    } else if (url.includes('/pricing') || url.includes('/plans')) {
+        pageType = 'pricing page';
+        hint = 'High intent. They are evaluating cost. Help them see value, pivot to a call.';
+    } else if (url.includes('/blog')) {
+        pageType = 'blog page';
+        hint = 'They are reading content. Be softer, offer value, do not push hard.';
+    } else if (url.includes('/contact')) {
+        pageType = 'contact page';
+        hint = 'Very high intent. They want to reach out. Make it easy to book a call.';
+    } else if (url.includes('/about')) {
+        pageType = 'about page';
+        hint = 'They are evaluating the team. Mention Snow founded the agency, senior team, boutique model.';
+    } else if (url.includes('/resources') || url.includes('/ai-tools')) {
+        pageType = 'resources page';
+        hint = 'They are looking at free resources. Offer to send a relevant one to their email.';
+    }
+
+    let result = `\n[PAGE: ${pageType} (${pageContext.url}). ${hint}]`;
+    return result;
+}
+
+/**
+ * Build UTM context string for the prompt
+ * @param {Object} utmParams - UTM parameters
+ * @returns {string}
+ */
+function buildUtmContext(utmParams) {
+    if (!utmParams) return '';
+
+    const parts = [];
+
+    if (utmParams.utm_source) parts.push(`Source: ${utmParams.utm_source}`);
+    if (utmParams.utm_medium) parts.push(`Medium: ${utmParams.utm_medium}`);
+    if (utmParams.utm_campaign) parts.push(`Campaign: ${utmParams.utm_campaign}`);
+    if (utmParams.utm_term) parts.push(`Search term: ${utmParams.utm_term}`);
+
+    if (parts.length === 0) return '';
+
+    let hint = '';
+    const source = (utmParams.utm_source || '').toLowerCase();
+    const medium = (utmParams.utm_medium || '').toLowerCase();
+
+    if (medium === 'cpc' || medium === 'ppc') {
+        hint = 'This visitor came from a paid ad. They clicked on an ad to get here, so they have active intent.';
+        if (utmParams.utm_term) {
+            hint += ` They searched for "${utmParams.utm_term}". Reference this topic naturally.`;
+        }
+    } else if (source === 'facebook' || source === 'instagram' || source === 'meta') {
+        hint = 'Visitor came from social media. They saw our content and clicked through.';
+    } else if (source === 'linkedin') {
+        hint = 'Visitor came from LinkedIn. Likely B2B. Tailor accordingly.';
+    } else if (medium === 'email') {
+        hint = 'Visitor came from an email campaign. They are already in our funnel.';
+    }
+
+    return `\n[TRAFFIC: ${parts.join(' | ')}. ${hint}]`;
+}
+
+/**
+ * Build time-of-day context (after-hours awareness)
+ * @returns {string}
+ */
+function buildTimeContext() {
+    // US Eastern time (Snow Media timezone)
+    const now = new Date();
+    const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = eastern.getHours();
+    const day = eastern.getDay(); // 0 = Sunday
+
+    const isWeekend = day === 0 || day === 6;
+    const isAfterHours = hour < 9 || hour >= 18;
+
+    if (isWeekend || isAfterHours) {
+        return '\n[TIME: After hours. Do NOT offer to connect them with someone right now. Focus on qualifying, capturing their email, and booking a call for the next business day. Say "I can book you a time with the team" not "let me connect you right now."]';
+    }
+
+    return '\n[TIME: Business hours. You can offer to connect them with the team if they are high-intent.]';
+}
+
 module.exports = {
     build,
     buildLeadContext,
     buildProgressSummary,
     getConversationStage,
-    getStageGuidance
+    getStageGuidance,
+    buildPageContext,
+    buildUtmContext,
+    buildTimeContext
 };
