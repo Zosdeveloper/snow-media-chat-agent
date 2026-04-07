@@ -1,169 +1,119 @@
-# CLAUDE.md - Snow Media Chat Agent
+# CLAUDE.md
 
-This file provides guidance for Claude Code when working on this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-AI-powered sales chat widget for The Snow Media marketing agency. The chat agent uses Claude API to qualify leads, capture contact information, and book strategy calls. It includes a RAG (Retrieval Augmented Generation) system that learns from successful conversation patterns.
+AI-powered sales chat widget for The Snow Media marketing agency. The chat agent uses Claude API (as "Milos") to qualify leads, capture contact info, and book strategy calls. Includes a RAG system that learns from successful conversation patterns.
 
 ## Tech Stack
 
-- **Backend**: Node.js + Express.js
+- **Backend**: Node.js + Express.js (all code in `server/`)
 - **Database**: SQLite (better-sqlite3) with sqlite-vec extension for vector search
-- **AI**: Claude API (Anthropic) for conversations
-- **Embeddings**: Voyage AI (voyage-3-lite model, 512 dimensions)
-- **Deployment**: Railway (auto-deploy from GitHub)
-- **Alerting**: Discord webhooks for error notifications
+- **AI**: Claude API (claude-sonnet-4-20250514) for conversations
+- **Embeddings**: Voyage AI (voyage-3-lite, 512 dimensions) for RAG similarity search
+- **Deployment**: Railway (auto-deploy from GitHub `main`)
 
 ## Commands
 
-### Development
-
 ```bash
+# All commands run from server/
 cd server
 npm install
-npm run dev     # Uses nodemon for hot reload
+npm run dev          # nodemon hot reload on localhost:3000
+npm start            # production: node server.js
 ```
 
-### Production
+No test suite exists. No linter configured.
 
-```bash
-cd server
-npm start       # Runs node server.js
-```
+## Environment Variables
 
-### Environment Variables
-
-Required in `.env` (see `.env.example`):
-
-```
-ANTHROPIC_API_KEY=     # Claude API key (required)
-VOYAGE_API_KEY=        # Voyage AI for embeddings (required for RAG)
-ADMIN_API_KEY=         # Admin dashboard authentication
-ALERT_WEBHOOK_URL=     # Discord webhook for error alerts
-PORT=3000              # Server port
-NODE_ENV=development   # or production
-DATABASE_PATH=./data/chat.db
-```
+Required in `server/.env` (see `server/.env.example`):
+- `ANTHROPIC_API_KEY` - Claude API (required)
+- `VOYAGE_API_KEY` - Voyage AI embeddings (required for RAG, gracefully degrades without)
+- `ADMIN_API_KEY` - Admin dashboard auth via `X-Admin-Api-Key` header
+- `ALERT_WEBHOOK_URL` - Discord webhook for error alerts
+- `PORT`, `NODE_ENV`, `DATABASE_PATH`
 
 ## Architecture
 
-### Directory Structure
+### Request Flow (POST /api/chat)
 
-```
-snow-media-chat-agent/
-├── server/                    # Backend (this is the deployable unit)
-│   ├── server.js             # Main Express app, chat endpoint, system prompt
-│   ├── config.js             # Centralized configuration
-│   ├── database/
-│   │   ├── db.js             # SQLite wrapper with vector search
-│   │   └── schema.sql        # Database schema
-│   ├── services/
-│   │   ├── ragService.js     # RAG context retrieval
-│   │   ├── embeddingService.js # Voyage AI embeddings
-│   │   ├── autoTagger.js     # Auto-detect successful patterns
-│   │   ├── promptBuilder.js  # Build enriched prompts
-│   │   └── alertService.js   # Discord/Slack notifications
-│   ├── routes/
-│   │   └── admin.js          # Admin API endpoints
-│   └── public/               # Static files for production
-│       ├── chat-agent-ai.js  # Client-side chat widget
-│       ├── embed-ai.js       # Embeddable version
-│       └── admin.html        # Admin dashboard
-├── chat-agent-ai.js          # Development client-side widget
-├── index.html                # Development test page
-└── admin.html                # Development admin dashboard
-```
+1. Validate input, get/create in-memory session (`Map`)
+2. Persist conversation + message to SQLite
+3. RAG: embed current context via Voyage AI, find similar successful patterns via sqlite-vec
+4. `promptBuilder` enriches system prompt with RAG examples + lead context + stage guidance
+5. Claude generates response (max 500 tokens)
+6. Parse special tokens (`[BOOK_CALL]`, `[QUICK_REPLIES: ...]`) from response
+7. Extract lead data (name/email/phone) from user message via regex
+8. Auto-tagger evaluates if conversation qualifies as a saveable pattern
 
 ### Key Files
 
-- **server/server.js:77-207** - Main system prompt defining Milos's personality, The Snow Media services, case studies, and conversation rules
-- **server/config.js** - All configuration values (RAG thresholds, session limits, etc.)
-- **server/database/db.js** - Database operations including vector similarity search
-- **server/services/ragService.js** - Retrieves relevant conversation patterns for few-shot learning
+- **`server/prompts/systemPrompt.js`** - Full system prompt defining Milos's personality, services, case studies, objection handling, and conversation rules
+- **`server/config.js`** - All tunable values: RAG thresholds, rate limits, session settings, CORS origins, embedding config
+- **`server/database/db.js`** - SQLite wrapper with vector search, migrations, all CRUD operations
+- **`server/database/schema.sql`** - Three tables: `conversations`, `messages`, `successful_patterns` + triggers
+- **`server/services/ragService.js`** - Vector similarity search for few-shot pattern retrieval
+- **`server/services/embeddingService.js`** - Voyage AI API wrapper
+- **`server/services/autoTagger.js`** - Scores conversations for auto-saving as patterns (weighted: booking 0.3, positive response 0.2, email captured 0.2, etc.)
+- **`server/services/promptBuilder.js`** - Assembles enriched prompt from base + RAG context + lead data
+- **`server/services/alertService.js`** - Discord webhook notifications on errors
+- **`server/routes/admin.js`** - Admin API: conversations, patterns CRUD, analytics, CSV export
 
-### Data Flow
+### Client Widget
 
-1. User sends message to `/api/chat`
-2. Session retrieved/created, message persisted to SQLite
-3. RAG service finds similar successful patterns via Voyage embeddings
-4. Prompt enriched with relevant examples
-5. Claude generates response with lead extraction
-6. Response parsed for quick replies and [BOOK_CALL] tokens
-7. Auto-tagger checks if conversation should be saved as a pattern
+- **`server/public/chat-agent-ai.js`** - Production widget (relative paths, served by Express)
+- **`server/public/embed-ai.js`** - Embeddable version for external sites
 
-### API Endpoints
+Special tokens in AI responses:
+- `[BOOK_CALL]` - Renders Calendly booking button
+- `[QUICK_REPLIES: "Option 1", "Option 2"]` - Renders quick reply buttons
+
+### Static Serving
+
+- Production (`NODE_ENV=production`): serves `server/public/`
+- Development: serves repo root (for dev HTML pages)
+
+### Database
+
+SQLite at `./data/chat.db` (Railway persistent volume). WAL mode enabled. Migrations tracked in `_migrations` table.
+
+Vector search: `vec_patterns` virtual table (sqlite-vec). Falls back to recent high-confidence patterns if extension unavailable.
+
+### Sessions
+
+In-memory `Map` in `server.js`. Sessions expire after 1 hour (marked `abandoned` in DB). Cleanup runs every 15 minutes. Max 20 messages kept per session.
+
+## API Endpoints
 
 **Public:**
-- `POST /api/chat` - Main chat endpoint (rate limited: 20/min)
+- `POST /api/chat` - Main chat (rate limited: 20/min)
 - `POST /api/leads` - Lead submission
-- `GET /api/health` - Health check
+- `GET /api/health` - Health check with DB stats
 
-**Admin (requires X-Admin-Api-Key header):**
-- `GET /api/admin/conversations` - List conversations with filtering
-- `GET /api/admin/conversations/:id` - Get conversation with messages
+**Admin (requires `X-Admin-Api-Key` header):**
+- `GET /api/admin/conversations` - List with filtering/pagination
+- `GET /api/admin/conversations/:id` - Conversation with messages
 - `PATCH /api/admin/conversations/:id/outcome` - Update outcome
-- `GET /api/admin/patterns` - List successful patterns
-- `POST /api/admin/patterns` - Create pattern manually
-- `DELETE /api/admin/patterns/:id` - Delete pattern
-- `GET /api/admin/export/leads` - CSV export with filters
+- `GET/POST/DELETE /api/admin/patterns` - Pattern CRUD
+- `GET /api/admin/export/leads` - CSV export
 - `GET /api/admin/analytics` - Dashboard analytics
 - `GET /api/admin/stats` - Quick stats
 
 ## Conversation Outcomes
 
-- `in_progress` - Active conversation
-- `converted` - Booked a call
-- `contact_captured` - Got contact info but no booking
-- `not_qualified` - Not a fit (wrong industry/size)
-- `abandoned` - Inactive for 1 hour
-
-## RAG System
-
-The RAG system improves responses by:
-1. Generating embeddings for current conversation context
-2. Finding similar successful patterns via vector similarity (sqlite-vec)
-3. Injecting relevant examples into the system prompt
-
-Configuration in `config.js`:
-- `rag.maxPatterns`: 3 (patterns retrieved per query)
-- `rag.similarityThreshold`: 0.6 (minimum similarity score)
-- `autoTag.minConfidence`: 0.7 (threshold for auto-saving patterns)
-
-## Client Widget
-
-Two versions of the client-side widget:
-- `chat-agent-ai.js` - Development version (uses localhost:3000)
-- `server/public/chat-agent-ai.js` - Production version (uses relative paths)
-
-Special tokens in AI responses:
-- `[BOOK_CALL]` - Renders as Calendly booking button
-- `[QUICK_REPLIES: "Option 1", "Option 2"]` - Renders quick reply buttons
-
-## Testing Locally
-
-1. Set up environment variables in `server/.env`
-2. Run `npm run dev` in server directory
-3. Open `http://localhost:3000` to test chat widget
-4. Open `http://localhost:3000/admin.html` for admin (enter API key via login prompt)
+`in_progress` | `converted` | `contact_captured` | `not_qualified` | `abandoned`
 
 ## Deployment
 
-Deployed to Railway with auto-deploy from GitHub main branch.
+Railway auto-deploys from `main`. Admin dashboard at the Railway URL + `/admin.html`.
 
-Admin dashboard: `https://snow-media-chat-agent-production.up.railway.app/admin.html` (enter API key via the login prompt)
+Database persisted at `./data/chat.db` on Railway persistent volume.
 
-## Important Notes
+## Important Patterns
 
-- Never commit API keys - they should only exist in Railway environment variables
-- The `server/public/` directory is what gets served in production
-- Changes to client-side files need to be made in both root and `server/public/`
-- Database is persisted at `./data/chat.db` (Railway persistent volume)
-- Alert webhook sends to Discord on chat errors and lead capture failures
-
-## Future Improvements (Discussed)
-
-- Page-specific chat triggers based on URL
-- Lead magnet gating (capture email before downloads)
-- Weekly email reports
-- A/B testing different openers
+- CORS whitelist in `config.js` - add new domains there, not in server.js
+- Output validation in the chat endpoint flags suspicious AI responses (unrealistic percentages, guarantee language, specific pricing)
+- Lead data extraction uses regex patterns in `extractLeadData()` in server.js - name detection requires explicit introduction phrases to avoid false positives
+- All DB writes in the chat flow are fire-and-forget (caught errors logged but don't block response)
