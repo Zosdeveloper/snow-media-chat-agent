@@ -253,7 +253,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         const tools = [
             {
                 name: 'show_booking_calendar',
-                description: 'Show the Calendly booking widget when the visitor is ready to schedule a call. Use this instead of writing [BOOK_CALL] in your message.',
+                description: 'Show the Calendly booking widget to the visitor. Call ONLY after explicit consent to book (e.g. "yeah let\'s do it", "how do I book?", "I\'m in"). DO NOT call speculatively, to nudge, while they\'re still deciding, or during discovery/objection stages. Your text message is still required and should cue the action (e.g. "Let\'s do it — grab a time below.").',
                 input_schema: {
                     type: 'object',
                     properties: {},
@@ -262,14 +262,14 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             },
             {
                 name: 'offer_quick_replies',
-                description: 'Show clickable quick reply buttons below your message. Use when offering 2-3 clear options helps move the conversation forward.',
+                description: 'Show 2-3 clickable reply buttons below your message. Use SPARINGLY, only at genuine decision forks where the choices are distinct paths forward (e.g. "Running ads now" vs "Starting fresh" vs "Just exploring"). DO NOT call when the visitor is mid-explanation, when your question is naturally open-ended, when you just used it on the previous message, or when there are more than 3 meaningful options. Maximum one call per response. Never two quick-reply messages in a row. If in doubt, skip it and let them type.',
                 input_schema: {
                     type: 'object',
                     properties: {
                         options: {
                             type: 'array',
                             items: { type: 'string' },
-                            description: 'Array of 2-3 short reply options',
+                            description: 'Array of 2-3 short reply options (under 6 words each)',
                             maxItems: 3
                         }
                     },
@@ -278,7 +278,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             },
             {
                 name: 'capture_lead_field',
-                description: 'Record a piece of lead info the visitor shared (name, email, phone, business type). Call this whenever you detect contact information in their message.',
+                description: 'Record a piece of lead info the visitor shared in their CURRENT message. Call once per field per turn. DO NOT call retroactively for info shared in a prior message, and DO NOT call twice for the same field already captured. For business_type, only call when the visitor explicitly names their business (valid: "I run an HVAC company"; NOT valid: "we need more leads"). Multiple parallel calls are fine if they shared multiple fields in one message.',
                 input_schema: {
                     type: 'object',
                     properties: {
@@ -293,20 +293,20 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             },
             {
                 name: 'suggest_resource',
-                description: 'Offer a specific free resource as a lead magnet to exchange for their email. Use when pivoting to capture their email address.',
+                description: 'Offer a specific free resource in exchange for their email. Call this only when you are actively asking for their email and pairing it with a resource. Use ONLY these exact resource names: "Home Services Ad Benchmark Report", "E-Commerce Ad Benchmark Report", "Ad Budget Calculator", "AI Automation ROI Calculator", "Agency Performance Scorecard", "Google Ads Audit Checklist". DO NOT invent company-specific or hyper-niche titles. Match the resource_type to what the resource actually is.',
                 input_schema: {
                     type: 'object',
                     properties: {
                         resource_name: {
                             type: 'string',
-                            description: 'Name of the resource, e.g. "Home Services Ad Benchmark Report"'
+                            description: 'Exact name from the approved list. Do not invent.'
                         },
                         resource_type: {
                             type: 'string',
                             enum: ['benchmark_report', 'calculator', 'playbook', 'checklist', 'comparison_guide']
                         }
                     },
-                    required: ['resource_name']
+                    required: ['resource_name', 'resource_type']
                 }
             }
         ];
@@ -521,6 +521,13 @@ function detectPromptInjection(message) {
         /jailbreak/i,
         /pretend\s+you\s+are/i,
         /act\s+as\s+(?:if|though)\s+you/i,
+        /repeat\s+after\s+me/i,
+        /say\s+exactly/i,
+        /in\s+training\s+mode/i,
+        /developer\s+mode/i,
+        /act\s+as\s+if\s+you\s+have\s+no/i,
+        /as\s+an\s+AI\s+without\s+restrictions?/i,
+        /translate\s+your\s+(system\s+)?(prompt|instructions)/i,
     ];
 
     for (const pattern of injectionPatterns) {
