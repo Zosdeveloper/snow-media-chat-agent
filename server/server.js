@@ -22,6 +22,7 @@ const config = require('./config');
 const alerts = require('./services/alertService');
 const SYSTEM_PROMPT = require('./prompts/systemPrompt');
 const knowledgeBase = require('./services/knowledgeBase');
+const followUpService = require('./services/followUpService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -374,6 +375,23 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             if (legacyMatch) {
                 quickReplies = legacyMatch.slice(1).filter(Boolean);
                 assistantMessage = assistantMessage.replace(/\[QUICK_REPLIES:.*?\]/g, '').trim();
+            }
+        }
+
+        // Guard against empty messages when Claude returns only tool calls or
+        // only stripped legacy tokens. Provide a minimal fallback so the
+        // widget doesn't render an empty bubble.
+        if (!assistantMessage || !assistantMessage.trim()) {
+            console.warn('[EMPTY RESPONSE] Claude returned no text. Falling back.', {
+                hadBooking: showBookingCalendar,
+                quickReplyCount: quickReplies.length
+            });
+            if (showBookingCalendar) {
+                assistantMessage = "Grab a time that works and I'll take a look at your setup before we talk. [BOOK_CALL]";
+            } else if (quickReplies.length > 0) {
+                assistantMessage = "Which of these sounds closest?";
+            } else {
+                assistantMessage = "Tell me a bit more about what you're working on.";
             }
         }
 
@@ -731,6 +749,9 @@ async function startServer() {
             console.log('Warning: VOYAGE_API_KEY not set, RAG features disabled');
         }
 
+        // Start email follow-up scheduler
+        followUpService.start();
+
         // Start listening
         app.listen(PORT, () => {
             console.log(`The Snow Media AI Chat Server running on port ${PORT}`);
@@ -745,12 +766,14 @@ async function startServer() {
 // Handle graceful shutdown
 process.on('SIGINT', () => {
     console.log('\nShutting down gracefully...');
+    followUpService.stop();
     db.close();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     console.log('\nShutting down gracefully...');
+    followUpService.stop();
     db.close();
     process.exit(0);
 });

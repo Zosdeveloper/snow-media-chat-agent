@@ -342,6 +342,9 @@ class SnowMediaAIChatAgent {
     }
 
     addMessage(text, sender) {
+        // Skip empty/whitespace-only messages to prevent empty bubble glitch
+        if (!text || !text.trim()) return;
+
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}`;
 
