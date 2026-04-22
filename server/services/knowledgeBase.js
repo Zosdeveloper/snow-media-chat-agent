@@ -73,6 +73,12 @@ async function seedIfEmpty() {
           content: 'Google Business Profile optimization, local keyword targeting, citation building across 80+ directories, review management. 150% visibility increase typical. Results in 60-90 days. 46% of Google searches have local intent.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'CRO - Conversion Rate Optimization',
           content: 'A/B testing, landing page optimization, funnel analysis, heatmaps and session recordings. Typical 30-60% improvement in first 90 days. Need 10k+ monthly visitors for A/B testing. Tools: VWO, Hotjar, GA4.' },
+        { type: CONTENT_TYPES.SERVICE, industry: 'b2b', title: 'Microsoft Ads Management',
+          content: 'Bing Search, Audience Network, LinkedIn-targeted search campaigns. Typically around 35% lower CPCs than Google Ads for the same keywords. Strong fit for B2B and older demographics. Often runs parallel to a Google Ads account to capture search volume Google misses. Min $2-3k/mo ad spend recommended.' },
+        { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Brand Strategy',
+          content: 'Positioning, messaging frameworks, value proposition development, visual identity. Delivered as a brand guidelines document plus messaging matrix. Foundational work for companies repositioning or entering a new market. Usually a 3-5 week engagement, often paired with a website rebuild or paid ads relaunch.' },
+        { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Web Development',
+          content: 'WordPress for service businesses, content sites, and SEO-driven projects. Shopify for e-commerce. Conversion-focused builds with server-side rendering, JSON-LD schema, Core Web Vitals optimization, and on-page SEO baked in from day one. Typical build 4-8 weeks depending on scope. Includes GA4, conversion tracking, and handoff documentation.' },
 
         // Resources (lead magnets)
         { type: CONTENT_TYPES.RESOURCE, industry: 'ecommerce', title: 'E-Commerce Ad Benchmark Report',
