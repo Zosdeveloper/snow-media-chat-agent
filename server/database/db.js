@@ -112,6 +112,40 @@ async function initialize() {
         console.log('Migration check completed:', err.message);
     }
 
+    // Migration: Add follow_ups table for email follow-up sequences
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_follow_ups_table'").get();
+        if (!alreadyRun) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS follow_ups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    lead_email TEXT NOT NULL,
+                    lead_name TEXT,
+                    sequence_step INTEGER NOT NULL DEFAULT 1,
+                    email_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'failed', 'skipped')),
+                    subject TEXT,
+                    body_html TEXT,
+                    scheduled_at DATETIME NOT NULL,
+                    sent_at DATETIME,
+                    error_message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_follow_ups_status ON follow_ups(status, scheduled_at);
+                CREATE INDEX IF NOT EXISTS idx_follow_ups_conversation ON follow_ups(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_follow_ups_email ON follow_ups(lead_email);
+            `);
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_follow_ups_table')").run();
+            console.log('Created follow_ups table');
+        }
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.log('Follow-ups migration note:', err.message);
+        }
+    }
+
     // Create virtual table for vector search if extension loaded
     if (vecLoaded) {
         try {
@@ -546,6 +580,152 @@ function getVariantStats() {
 }
 
 // ============================================
+// FOLLOW-UP QUERIES
+// ============================================
+
+/**
+ * Get conversations eligible for follow-up scheduling.
+ * Must have email, outcome in_progress or contact_captured,
+ * last message older than minAge minutes, and no follow-ups queued yet.
+ */
+function getFollowUpCandidates(minAgeMinutes = 30) {
+    const db = getDb();
+    return db.prepare(`
+        SELECT c.id, c.lead_name, c.lead_email, c.lead_business_type, c.outcome,
+               c.source_url, c.created_at,
+               MAX(m.created_at) as last_message_at
+        FROM conversations c
+        JOIN messages m ON m.conversation_id = c.id
+        WHERE c.lead_email IS NOT NULL
+          AND c.outcome IN ('in_progress', 'contact_captured')
+          AND c.id NOT IN (SELECT DISTINCT conversation_id FROM follow_ups)
+          AND datetime(m.created_at, '+' || ? || ' minutes') < datetime('now')
+        GROUP BY c.id
+    `).all(minAgeMinutes);
+}
+
+/**
+ * Create a follow-up email record
+ */
+function createFollowUp(data) {
+    const db = getDb();
+    return db.prepare(`
+        INSERT INTO follow_ups (conversation_id, lead_email, lead_name, sequence_step, email_type, subject, body_html, scheduled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        data.conversation_id,
+        data.lead_email,
+        data.lead_name || null,
+        data.sequence_step,
+        data.email_type,
+        data.subject || null,
+        data.body_html || null,
+        data.scheduled_at
+    );
+}
+
+/**
+ * Get pending follow-ups that are due to send
+ */
+function getDueFollowUps() {
+    const db = getDb();
+    return db.prepare(`
+        SELECT f.*, c.lead_business_type, c.source_url
+        FROM follow_ups f
+        JOIN conversations c ON c.id = f.conversation_id
+        WHERE f.status = 'pending'
+          AND datetime(f.scheduled_at) <= datetime('now')
+        ORDER BY f.scheduled_at ASC
+        LIMIT 20
+    `).all();
+}
+
+/**
+ * Mark a follow-up as sent
+ */
+function markFollowUpSent(followUpId) {
+    const db = getDb();
+    db.prepare(`UPDATE follow_ups SET status = 'sent', sent_at = datetime('now') WHERE id = ?`).run(followUpId);
+}
+
+/**
+ * Mark a follow-up as failed
+ */
+function markFollowUpFailed(followUpId, errorMessage) {
+    const db = getDb();
+    db.prepare(`UPDATE follow_ups SET status = 'failed', error_message = ? WHERE id = ?`).run(errorMessage, followUpId);
+}
+
+/**
+ * Skip remaining follow-ups for a conversation (e.g., they booked a call)
+ */
+function skipFollowUps(conversationId) {
+    const db = getDb();
+    db.prepare(`UPDATE follow_ups SET status = 'skipped' WHERE conversation_id = ? AND status = 'pending'`).run(conversationId);
+}
+
+/**
+ * Count follow-ups sent today (for daily limit)
+ */
+function getFollowUpsSentToday() {
+    const db = getDb();
+    const result = db.prepare(`
+        SELECT COUNT(*) as count FROM follow_ups
+        WHERE status = 'sent' AND date(sent_at) = date('now')
+    `).get();
+    return result.count;
+}
+
+/**
+ * List follow-ups with filtering (for admin)
+ */
+function listFollowUps({ limit = 50, offset = 0, status = null, conversationId = null } = {}) {
+    const db = getDb();
+    let query = 'SELECT f.*, c.lead_business_type FROM follow_ups f JOIN conversations c ON c.id = f.conversation_id WHERE 1=1';
+    const params = [];
+
+    if (status) {
+        query += ' AND f.status = ?';
+        params.push(status);
+    }
+    if (conversationId) {
+        query += ' AND f.conversation_id = ?';
+        params.push(conversationId);
+    }
+
+    query += ' ORDER BY f.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    return db.prepare(query).all(...params);
+}
+
+/**
+ * Get follow-up stats for admin dashboard
+ */
+function getFollowUpStats() {
+    const db = getDb();
+    return db.prepare(`
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped,
+            COUNT(DISTINCT conversation_id) as unique_leads
+        FROM follow_ups
+    `).get();
+}
+
+/**
+ * Check if a conversation already converted (booked) so we can skip follow-ups
+ */
+function isConversationConverted(conversationId) {
+    const db = getDb();
+    const result = db.prepare(`SELECT outcome FROM conversations WHERE id = ?`).get(conversationId);
+    return result && result.outcome === 'converted';
+}
+
+// ============================================
 // UTILITY FUNCTIONS
 // ============================================
 
@@ -615,6 +795,18 @@ module.exports = {
     deletePattern,
     searchSimilarPatterns,
     patternExistsForConversation,
+
+    // Follow-ups
+    getFollowUpCandidates,
+    createFollowUp,
+    getDueFollowUps,
+    markFollowUpSent,
+    markFollowUpFailed,
+    skipFollowUps,
+    getFollowUpsSentToday,
+    listFollowUps,
+    getFollowUpStats,
+    isConversationConverted,
 
     // Session persistence
     saveSessionState,

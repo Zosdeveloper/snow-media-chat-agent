@@ -132,6 +132,8 @@ router.patch('/conversations/:id/outcome', async (req, res) => {
                     businessType: fullConversation.lead_business_type
                 }
             });
+            // Skip any pending follow-up emails since they booked
+            db.skipFollowUps(req.params.id);
         } else if (outcome === 'abandoned') {
             db.markAbandoned(req.params.id);
         } else {
@@ -591,6 +593,56 @@ router.get('/health', (req, res) => {
             database: 'error',
             error: error.message
         });
+    }
+});
+
+// ============================================
+// FOLLOW-UP ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/admin/follow-ups
+ * List follow-up emails with filtering
+ */
+router.get('/follow-ups', (req, res) => {
+    try {
+        const { limit = 50, offset = 0, status, conversation_id } = req.query;
+        const followUps = db.listFollowUps({
+            limit: parseInt(limit) || 50,
+            offset: parseInt(offset) || 0,
+            status: status || null,
+            conversationId: conversation_id || null,
+        });
+        res.json(followUps);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to list follow-ups', details: error.message });
+    }
+});
+
+/**
+ * GET /api/admin/follow-ups/stats
+ * Follow-up email statistics
+ */
+router.get('/follow-ups/stats', (req, res) => {
+    try {
+        const stats = db.getFollowUpStats();
+        const sentToday = db.getFollowUpsSentToday();
+        res.json({ ...stats, sent_today: sentToday, daily_limit: config.followUp.dailyLimit });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get follow-up stats', details: error.message });
+    }
+});
+
+/**
+ * POST /api/admin/follow-ups/:conversationId/skip
+ * Skip remaining pending follow-ups for a conversation
+ */
+router.post('/follow-ups/:conversationId/skip', (req, res) => {
+    try {
+        db.skipFollowUps(req.params.conversationId);
+        res.json({ success: true, message: 'Remaining follow-ups skipped' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to skip follow-ups', details: error.message });
     }
 });
 

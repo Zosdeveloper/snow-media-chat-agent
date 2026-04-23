@@ -51,6 +51,22 @@ const config = {
         maxMessages: 20,                 // Keep last 20 messages
     },
 
+    // Email follow-up settings
+    followUp: {
+        enabled: !!process.env.SENDGRID_API_KEY,
+        sendgridApiKey: process.env.SENDGRID_API_KEY,
+        fromEmail: process.env.SENDGRID_FROM_EMAIL || 'milos@thesnowmedia.com',
+        fromName: 'Milos | The Snow Media',
+        checkIntervalMs: 30 * 60 * 1000,    // Check every 30 minutes
+        dailyLimit: 95,                       // Stay under SendGrid free tier 100/day
+        calendlyUrl: 'https://calendly.com/milos-thesnowmedia/strategy-call',
+        sequence: [
+            { delayMinutes: 45, type: 'recap' },       // Email 1: 45 min after last message
+            { delayMinutes: 24 * 60, type: 'case_study' },  // Email 2: 24 hours
+            { delayMinutes: 72 * 60, type: 'final' },       // Email 3: 72 hours
+        ],
+    },
+
     // Rate limiting
     rateLimit: {
         windowMs: 60 * 1000,  // 1 minute
