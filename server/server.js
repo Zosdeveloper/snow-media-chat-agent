@@ -39,7 +39,7 @@ const corsOptions = {
         if (config.allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            // Pass false instead of error — browser enforces CORS, server stays stable
+            // Pass false instead of error; browser enforces CORS, server stays stable
             callback(null, false);
         }
     },
@@ -278,39 +278,34 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // Add conversation stage guidance
         contextMessage += promptBuilder.getStageGuidance(session);
 
-        // Get relevant patterns and inject as few-shot examples
-        let enrichedPrompt = SYSTEM_PROMPT;
+        // Retrieve few-shot patterns for the dynamic system block
+        let ragAddendum = '';
         try {
             const ragContext = await ragService.getRelevantContext(session, message);
-            enrichedPrompt = promptBuilder.build(SYSTEM_PROMPT, ragContext);
+            ragAddendum = promptBuilder.buildRagAddendum(ragContext);
         } catch (err) {
             console.error('Error getting RAG context:', err.message);
         }
-
-        // Prepare messages for Claude
-        let messagesForClaude = [...session.messages];
 
         // Prepend conversation summary if available (from trimmed history)
         if (session.conversationSummary) {
             contextMessage = `\n[CONVERSATION HISTORY SUMMARY: ${session.conversationSummary}]` + contextMessage;
         }
 
-        // Append context to last user message
-        messagesForClaude = messagesForClaude.map((msg, index) => {
-            if (index === messagesForClaude.length - 1 && msg.role === 'user') {
-                return {
-                    role: msg.role,
-                    content: msg.content + contextMessage
-                };
-            }
-            return msg;
-        });
+        // Assemble the dynamic (non-cached) system block. Keeping this separate
+        // from SYSTEM_PROMPT lets Anthropic prompt caching hit on the static base.
+        const dynamicSystemBlock =
+            '<session_context>' + contextMessage + '\n</session_context>' +
+            (ragAddendum ? '\n\n' + ragAddendum : '');
+
+        // Messages array is unchanged from session history (context now lives in system block 2)
+        const messagesForClaude = session.messages;
 
         // Claude tool definitions
         const tools = [
             {
                 name: 'show_booking_calendar',
-                description: 'Show the Calendly booking widget to the visitor. Call ONLY after explicit consent to book (e.g. "yeah let\'s do it", "how do I book?", "I\'m in"). DO NOT call speculatively, to nudge, while they\'re still deciding, or during discovery/objection stages. Your text message is still required and should cue the action (e.g. "Let\'s do it — grab a time below.").',
+                description: 'Show the Calendly booking widget to the visitor. Call ONLY after explicit consent to book (e.g. "yeah let\'s do it", "how do I book?", "I\'m in"). DO NOT call speculatively, to nudge, while they\'re still deciding, or during discovery/objection stages. Your text message is still required and should cue the action (e.g. "Let\'s do it. Grab a time below.").',
                 input_schema: {
                     type: 'object',
                     properties: {},
@@ -327,6 +322,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                             type: 'array',
                             items: { type: 'string' },
                             description: 'Array of 2-3 short reply options (under 6 words each)',
+                            minItems: 2,
                             maxItems: 3
                         }
                     },
@@ -350,13 +346,20 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             },
             {
                 name: 'suggest_resource',
-                description: 'Offer a specific free resource in exchange for their email. Call this only when you are actively asking for their email and pairing it with a resource. Use ONLY these exact resource names: "Home Services Ad Benchmark Report", "E-Commerce Ad Benchmark Report", "Ad Budget Calculator", "AI Automation ROI Calculator", "Agency Performance Scorecard", "Google Ads Audit Checklist". DO NOT invent company-specific or hyper-niche titles. Match the resource_type to what the resource actually is.',
+                description: 'Offer a specific free resource in exchange for their email. Call this only when you are actively asking for their email and pairing it with a resource. resource_name is an enum, pick the one that matches their niche or situation.',
                 input_schema: {
                     type: 'object',
                     properties: {
                         resource_name: {
                             type: 'string',
-                            description: 'Exact name from the approved list. Do not invent.'
+                            enum: [
+                                'Home Services Ad Benchmark Report',
+                                'E-Commerce Ad Benchmark Report',
+                                'Ad Budget Calculator',
+                                'AI Automation ROI Calculator',
+                                'Agency Performance Scorecard',
+                                'Google Ads Audit Checklist'
+                            ]
                         },
                         resource_type: {
                             type: 'string',
@@ -377,11 +380,16 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             );
         }
 
-        // Call Claude API with tools
+        // Call Claude API with tools. System is split into two blocks so the
+        // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
+        // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
         const response = await anthropic.messages.create({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 500,
-            system: enrichedPrompt,
+            system: [
+                { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+                { type: 'text', text: dynamicSystemBlock }
+            ],
             messages: messagesForClaude,
             tools: gatedTools,
             tool_choice: { type: 'auto' }
@@ -403,7 +411,13 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                         break;
                     case 'offer_quick_replies':
                         if (block.input.options) {
-                            quickReplies = block.input.options.slice(0, 3);
+                            // Suppress two quick-reply prompts in a row (the prompt rule,
+                            // enforced here so we don't rely on the model to follow it).
+                            if (session.lastHadQuickReplies) {
+                                console.warn('[QR SUPPRESSED] Consecutive quick-reply call dropped', { sessionId });
+                            } else {
+                                quickReplies = block.input.options.slice(0, 3);
+                            }
                         }
                         break;
                     case 'capture_lead_field':
@@ -415,8 +429,26 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                                 business_type: 'businessType'
                             };
                             const key = fieldMap[block.input.field];
-                            if (key) {
-                                session.leadData[key] = block.input.value;
+                            const newValue = String(block.input.value).trim();
+                            if (key && newValue) {
+                                const existing = session.leadData[key];
+                                if (!existing) {
+                                    session.leadData[key] = newValue;
+                                } else if (existing.toLowerCase() === newValue.toLowerCase()) {
+                                    // Same value, skip (model is re-firing)
+                                } else {
+                                    // Different value captured for an already-filled field.
+                                    // Prefer the longer / more structured value (full name > first name,
+                                    // full phone > partial). For email, keep original unless the new one
+                                    // is clearly different (user correcting themselves).
+                                    const preferNew = key === 'email'
+                                        ? newValue.includes('@') && newValue !== existing
+                                        : newValue.length > existing.length;
+                                    console.warn('[FIELD CONFLICT]', {
+                                        sessionId, field: key, existing, newValue, kept: preferNew ? 'new' : 'existing'
+                                    });
+                                    if (preferNew) session.leadData[key] = newValue;
+                                }
                             }
                         }
                         break;
@@ -426,6 +458,9 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                 }
             }
         }
+
+        // Record whether this turn emitted quick replies so the next turn can suppress consecutive calls
+        session.lastHadQuickReplies = quickReplies.length > 0;
 
         // Inject booking calendar marker for widget (if tool was called)
         if (showBookingCalendar && !assistantMessage.includes('[BOOK_CALL]')) {

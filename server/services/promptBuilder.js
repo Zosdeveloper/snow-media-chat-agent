@@ -4,37 +4,17 @@
  */
 
 /**
- * Build an enriched system prompt with few-shot examples
- * @param {string} basePrompt - The original system prompt
+ * Build the retrieval addendum string for the dynamic system block.
+ * Returns '' when no patterns retrieved. Caller assembles this into a
+ * non-cached second system block so the static base stays cacheable.
  * @param {Object} ragContext - Context from RAG service
- * @returns {string} - Enriched prompt with few-shot examples
+ * @returns {string} - Formatted examples section, or '' if no patterns
  */
-function build(basePrompt, ragContext) {
-    // If no relevant patterns, return original prompt
+function buildRagAddendum(ragContext) {
     if (!ragContext || !ragContext.hasContext || !ragContext.patterns.length) {
-        return basePrompt;
+        return '';
     }
-
-    // Format patterns as examples
-    const examplesSection = formatExamples(ragContext.patterns);
-
-    // Find the injection point - before "## FIRST MESSAGE CONTEXT"
-    // or at the end of "CRITICAL ACCURACY RULES" section
-    const injectionMarker = '## FIRST MESSAGE CONTEXT';
-    const injectionIndex = basePrompt.indexOf(injectionMarker);
-
-    if (injectionIndex !== -1) {
-        // Insert before FIRST MESSAGE CONTEXT
-        return (
-            basePrompt.slice(0, injectionIndex) +
-            examplesSection +
-            '\n\n' +
-            basePrompt.slice(injectionIndex)
-        );
-    }
-
-    // Fallback: append at the end
-    return basePrompt + '\n\n' + examplesSection;
+    return formatExamples(ragContext.patterns);
 }
 
 /**
@@ -408,7 +388,7 @@ function buildVariantContext(variant) {
 }
 
 module.exports = {
-    build,
+    buildRagAddendum,
     buildLeadContext,
     buildProgressSummary,
     getConversationStage,
