@@ -12,7 +12,12 @@ CREATE TABLE IF NOT EXISTS conversations (
     lead_business_type TEXT,
     outcome TEXT DEFAULT 'in_progress' CHECK(outcome IN ('in_progress', 'converted', 'contact_captured', 'not_qualified', 'abandoned')),
     message_count INTEGER DEFAULT 0,
-    source_url TEXT
+    source_url TEXT,
+    abandoned_at DATETIME,                            -- set when session cleanup marks as abandoned
+    booking_confirmed INTEGER DEFAULT 0,              -- 1 when Calendly webhook fires
+    booking_confirmed_at DATETIME,                    -- when the booking webhook was received
+    booking_trigger_reason TEXT,                      -- why the model booked: explicit_request | qualification_complete | warm_visitor_shortcut
+    booking_event_id TEXT                             -- Calendly event uri, used for dedupe
 );
 
 -- Messages table: stores all messages with embeddings
@@ -39,6 +44,10 @@ CREATE TABLE IF NOT EXISTS successful_patterns (
     booking_achieved INTEGER DEFAULT 0,               -- 1 if led to actual booking
     tagged_by TEXT DEFAULT 'auto',                    -- 'auto' or 'manual'
     confidence_score REAL DEFAULT 0,                  -- Auto-tagging confidence (0-1)
+    status TEXT DEFAULT 'quarantined' CHECK(status IN ('quarantined', 'active', 'archived')),
+                                                      -- quarantined = not yet retrievable, waiting for booking confirmation
+                                                      -- active = retrievable by RAG
+                                                      -- archived = expired or manually removed
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
 );
@@ -50,6 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_conversations_outcome ON conversations(outcome);
 CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
 CREATE INDEX IF NOT EXISTS idx_patterns_type ON successful_patterns(pattern_type);
 CREATE INDEX IF NOT EXISTS idx_patterns_confidence ON successful_patterns(confidence_score);
+-- idx_patterns_status and idx_conversations_booking_confirmed are created by
+-- migrations in db.js (they reference columns added after this schema was first shipped).
 
 -- Trigger to update conversation updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_conversation_timestamp

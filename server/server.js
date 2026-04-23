@@ -7,6 +7,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
@@ -57,7 +58,16 @@ const chatLimiter = rateLimit({
 
 // Middleware
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10kb' })); // Limit payload size
+// Capture raw body on webhook paths so we can verify Calendly's signature.
+// Other routes just get parsed JSON.
+app.use(express.json({
+    limit: '10kb',
+    verify: (req, _res, buf) => {
+        if (req.originalUrl && req.originalUrl.startsWith('/api/webhooks/')) {
+            req.rawBody = buf;
+        }
+    }
+}));
 
 // Serve static files - use different paths for dev vs production
 if (process.env.NODE_ENV === 'production') {
@@ -305,11 +315,17 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         const tools = [
             {
                 name: 'show_booking_calendar',
-                description: 'Show the Calendly booking widget to the visitor. Call ONLY after explicit consent to book (e.g. "yeah let\'s do it", "how do I book?", "I\'m in"). DO NOT call speculatively, to nudge, while they\'re still deciding, or during discovery/objection stages. Your text message is still required and should cue the action (e.g. "Let\'s do it. Grab a time below.").',
+                description: 'Show the Calendly booking widget to the visitor. Call ONLY after explicit consent to book (e.g. "yeah let\'s do it", "how do I book?", "I\'m in") or when a clearly warm visitor has named spend, a specific KPI, or said they\'re evaluating options. DO NOT call speculatively, to nudge, while they\'re still deciding, or during discovery/objection stages. Your text message is still required and should cue the action (e.g. "Let\'s do it. Grab a time below."). trigger_reason is required so we can attribute booking quality later: pick the most honest label.',
                 input_schema: {
                     type: 'object',
-                    properties: {},
-                    required: []
+                    properties: {
+                        trigger_reason: {
+                            type: 'string',
+                            enum: ['explicit_request', 'qualification_complete', 'warm_visitor_shortcut'],
+                            description: 'explicit_request = visitor asked to book or agreed after you offered. qualification_complete = you confirmed need + timing + authority-like signals before offering. warm_visitor_shortcut = first 1-2 messages showed clear buying intent (named spend, named KPI, evaluating options) and you skipped discovery.'
+                        }
+                    },
+                    required: ['trigger_reason']
                 }
             },
             {
@@ -408,6 +424,13 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                 switch (block.name) {
                     case 'show_booking_calendar':
                         showBookingCalendar = true;
+                        session.bookingTrigger = block.input?.trigger_reason || 'unspecified';
+                        console.log(`[BOOKING TRIGGERED] session=${sessionId} reason=${session.bookingTrigger}`);
+                        try {
+                            db.setBookingTriggerReason(sessionId, session.bookingTrigger);
+                        } catch (err) {
+                            console.error('Error saving booking trigger reason:', err.message);
+                        }
                         break;
                     case 'offer_quick_replies':
                         if (block.input.options) {
@@ -857,6 +880,109 @@ app.get('/api/health', (req, res) => {
 
     res.json(health);
 });
+
+// Verify Calendly webhook signature.
+// Calendly sends "Calendly-Webhook-Signature: t=<unix>,v1=<hex-hmac>".
+// Signature is HMAC-SHA256 over "<timestamp>.<raw-body>" using the signing key.
+// Returns { valid, reason }.
+function verifyCalendlySignature(req) {
+    const secret = config.calendly.webhookSecret;
+    if (!secret) {
+        return { valid: true, reason: 'no_secret_configured' }; // Dev mode: skip verification
+    }
+
+    const header = req.get('Calendly-Webhook-Signature') || '';
+    if (!header) return { valid: false, reason: 'missing_signature_header' };
+
+    const parts = Object.fromEntries(
+        header.split(',').map(p => p.split('=', 2))
+    );
+    const timestamp = parts.t;
+    const signature = parts.v1;
+    if (!timestamp || !signature) return { valid: false, reason: 'malformed_signature' };
+
+    const ageSec = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
+    if (!Number.isFinite(ageSec) || ageSec > config.calendly.signatureToleranceSec) {
+        return { valid: false, reason: 'stale_signature' };
+    }
+
+    const rawBody = req.rawBody ? req.rawBody.toString('utf8') : '';
+    const expected = crypto
+        .createHmac('sha256', secret)
+        .update(`${timestamp}.${rawBody}`)
+        .digest('hex');
+
+    const a = Buffer.from(expected, 'hex');
+    const b = Buffer.from(signature, 'hex');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return { valid: false, reason: 'signature_mismatch' };
+    }
+
+    return { valid: true, reason: null };
+}
+
+// Calendly webhook endpoint. Handles invitee.created (booking confirmed).
+// Matches to a conversation by email and promotes any quarantined RAG patterns.
+app.post('/api/webhooks/calendly', async (req, res) => {
+    const verification = verifyCalendlySignature(req);
+    if (!verification.valid) {
+        console.warn('[CALENDLY WEBHOOK] rejected:', verification.reason);
+        return res.status(401).json({ error: 'invalid_signature', reason: verification.reason });
+    }
+
+    const event = req.body?.event;
+    const payload = req.body?.payload || {};
+
+    if (event !== 'invitee.created') {
+        // Acknowledge but ignore other event types for now
+        return res.status(200).json({ ok: true, ignored: event });
+    }
+
+    const email = (payload.email || '').trim();
+    const eventId = payload.scheduled_event?.uri || payload.uri || null;
+    const inviteeName = payload.name || null;
+
+    try {
+        const result = db.confirmBooking({ email, eventId });
+        if (!result.matched) {
+            console.warn('[CALENDLY WEBHOOK] no conversation matched email', { email });
+            return res.status(200).json({ ok: true, matched: false });
+        }
+        if (result.alreadyConfirmed) {
+            return res.status(200).json({ ok: true, matched: true, alreadyConfirmed: true });
+        }
+
+        // Booking confirmed: promote any quarantined pattern for this conversation
+        const promoted = db.promoteQuarantinedPatterns();
+        // Stop further follow-up emails since they booked
+        try { db.skipFollowUps(result.conversationId); } catch (_e) {}
+
+        console.log('[CALENDLY WEBHOOK] booking confirmed', {
+            conversationId: result.conversationId, promoted, inviteeName
+        });
+
+        res.status(200).json({ ok: true, matched: true, promoted });
+    } catch (err) {
+        console.error('[CALENDLY WEBHOOK] processing error:', err.message);
+        res.status(500).json({ error: 'webhook_processing_failed' });
+    }
+});
+
+// Pattern maintenance tick: runs every 30 minutes.
+// Promotes any quarantined patterns whose source conversation got booking_confirmed
+// (catches cases where the per-webhook promote missed something), and archives
+// stale quarantined patterns that never got confirmed.
+setInterval(() => {
+    try {
+        const promoted = db.promoteQuarantinedPatterns();
+        const archived = db.archiveStaleQuarantinedPatterns(config.patterns.quarantineMaxDays);
+        if (promoted > 0 || archived > 0) {
+            console.log(`[PATTERN MAINT] promoted=${promoted} archived=${archived}`);
+        }
+    } catch (err) {
+        console.error('[PATTERN MAINT] error:', err.message);
+    }
+}, config.patterns.maintenanceIntervalMs);
 
 // Admin routes
 app.use('/api/admin', adminRoutes);

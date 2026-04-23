@@ -7,6 +7,45 @@ const db = require('../database/db');
 const ragService = require('./ragService');
 const config = require('../config');
 
+// Voice gate: phrases that mark a conversation as low-quality for RAG.
+// If any assistant message contains these, the pattern is rejected outright
+// instead of being quarantined. These match the banned list in systemPrompt.js
+// and are the phrases most likely to poison future retrievals with AI-tell patterns.
+const BANNED_PHRASES = [
+    'happy to', 'i\'d be happy', 'feel free to', 'don\'t hesitate',
+    'great question', 'absolutely', 'certainly', 'of course',
+    'i understand', 'i totally understand', 'i appreciate',
+    'fantastic', 'wonderful', 'let\'s dive in', 'let\'s unpack',
+    'it\'s not just', 'not only', 'it\'s worth noting',
+    'at the end of the day', 'game-changer', 'transformative',
+    'delve', 'robust', 'comprehensive', 'leverage',
+    'navigate', 'foster', 'harness', 'streamline', 'utilize'
+];
+
+const EM_DASH_PATTERN = /[–—]/;
+
+/**
+ * Voice gate: scan assistant messages for AI-tell phrases and em dashes.
+ * Returns { pass, reason } where reason names the first violation found.
+ * A failing conversation is never saved as a pattern, no matter how high its confidence.
+ */
+function voiceGate(messages) {
+    for (const msg of messages || []) {
+        if (msg.role !== 'assistant') continue;
+        const content = (msg.content || '').toLowerCase();
+
+        if (EM_DASH_PATTERN.test(msg.content || '')) {
+            return { pass: false, reason: 'em_dash' };
+        }
+        for (const phrase of BANNED_PHRASES) {
+            if (content.includes(phrase)) {
+                return { pass: false, reason: `banned_phrase:${phrase}` };
+            }
+        }
+    }
+    return { pass: true, reason: null };
+}
+
 /**
  * Check if a conversation should be auto-tagged as a successful pattern
  * @param {string} sessionId - Session ID
@@ -27,10 +66,21 @@ async function checkForPatterns(sessionId, session) {
             return;
         }
 
+        // Voice gate: any banned phrase or em dash in Milos's messages rejects the
+        // pattern outright. Quarantine wouldn't help here because the pattern
+        // content itself is the problem, not the outcome.
+        const gate = voiceGate(session.messages);
+        if (!gate.pass) {
+            console.log(`[VOICE GATE REJECT] session=${sessionId} reason=${gate.reason}`);
+            return;
+        }
+
         // Calculate confidence score
         const score = calculateConfidenceScore(session);
 
-        // If meets threshold, create pattern
+        // If meets threshold, create pattern. It will land in status='quarantined'
+        // by default and only become retrievable after the Calendly webhook
+        // confirms the booking (via db.promoteQuarantinedPatterns).
         if (score >= config.autoTag.minConfidence) {
             await createPatternFromSession(sessionId, session, score);
         }
@@ -274,23 +324,33 @@ function selectRelevantMessages(messages) {
 }
 
 /**
- * Manually mark a conversation as converted and create/update pattern
- * @param {string} sessionId - Session ID
- * @param {Object} session - Session data (optional, will load from DB if not provided)
+ * Manually mark a conversation as converted. Used by the admin route as a
+ * backup path when the Calendly webhook didn't match (e.g. email mismatch).
+ * Sets booking_confirmed=1 and promotes any quarantined pattern for this
+ * conversation to active. Still runs the voice gate before saving a new
+ * pattern so admin-marked conversations can't poison RAG either.
  */
 async function markAsConverted(sessionId, session = null) {
-    // Mark conversation as converted
-    db.markConverted(sessionId);
+    // Confirm booking directly and promote any quarantined pattern
+    db.confirmBooking({ sessionId });
+    const promoted = db.promoteQuarantinedPatterns();
+    if (promoted > 0) {
+        console.log(`[MANUAL CONFIRM] session=${sessionId} promoted ${promoted} pattern(s)`);
+    }
 
-    // If pattern exists, update booking_achieved
+    // If no pattern exists yet and we have session data, create one now.
+    // Voice gate applies here too.
     const existingPatterns = db.getPatternsByConversation(sessionId);
-
-    if (existingPatterns.length > 0) {
-        // Update existing pattern - this would need a db update function
-        console.log(`Pattern for session ${sessionId} marked as converted`);
-    } else if (session) {
-        // Create new pattern with high confidence
+    if (existingPatterns.length === 0 && session) {
+        const gate = voiceGate(session.messages);
+        if (!gate.pass) {
+            console.log(`[VOICE GATE REJECT manual] session=${sessionId} reason=${gate.reason}`);
+            return;
+        }
         await createPatternFromSession(sessionId, session, 1.0);
+        // Newly created pattern will be quarantined per default; promote it immediately
+        // since the admin just confirmed the booking.
+        db.promoteQuarantinedPatterns();
     }
 }
 

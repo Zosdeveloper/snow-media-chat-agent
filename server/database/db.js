@@ -64,7 +64,7 @@ async function initialize() {
 
     // Migration: Add new outcome values to conversations table
     // SQLite doesn't support ALTER CHECK constraint, so we recreate the table
-    // Only run once — tracked via a migrations meta table
+    // Only run once, tracked via a migrations meta table
     try {
         db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
         const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_outcome_values'").get();
@@ -166,6 +166,44 @@ async function initialize() {
         }
     } catch (err) {
         console.log('Intent migration note:', err.message);
+    }
+
+    // Migration: booking confirmation columns on conversations (P3-3)
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_booking_confirmation_columns'").get();
+        if (!alreadyRun) {
+            const cols = db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name);
+            if (!cols.includes('abandoned_at')) db.exec("ALTER TABLE conversations ADD COLUMN abandoned_at DATETIME");
+            if (!cols.includes('booking_confirmed')) db.exec("ALTER TABLE conversations ADD COLUMN booking_confirmed INTEGER DEFAULT 0");
+            if (!cols.includes('booking_confirmed_at')) db.exec("ALTER TABLE conversations ADD COLUMN booking_confirmed_at DATETIME");
+            if (!cols.includes('booking_trigger_reason')) db.exec("ALTER TABLE conversations ADD COLUMN booking_trigger_reason TEXT");
+            if (!cols.includes('booking_event_id')) db.exec("ALTER TABLE conversations ADD COLUMN booking_event_id TEXT");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_booking_confirmed ON conversations(booking_confirmed)");
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_booking_confirmation_columns')").run();
+            console.log('Added booking confirmation columns to conversations');
+        }
+    } catch (err) {
+        console.log('Booking columns migration note:', err.message);
+    }
+
+    // Migration: pattern status column for quarantine flow (P2-3)
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_pattern_status_column'").get();
+        if (!alreadyRun) {
+            const cols = db.prepare("PRAGMA table_info(successful_patterns)").all().map(c => c.name);
+            if (!cols.includes('status')) {
+                // Add without CHECK constraint first (SQLite limitation for ALTER), enforce via app layer
+                db.exec("ALTER TABLE successful_patterns ADD COLUMN status TEXT DEFAULT 'active'");
+                // Existing patterns (including seeded knowledge base) are trusted, default active.
+                // Future auto-tagged patterns explicitly insert 'quarantined'.
+                db.exec("UPDATE successful_patterns SET status = 'active' WHERE status IS NULL");
+            }
+            db.exec("CREATE INDEX IF NOT EXISTS idx_patterns_status ON successful_patterns(status)");
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_pattern_status_column')").run();
+            console.log('Added status column to successful_patterns (existing rows defaulted to active)');
+        }
+    } catch (err) {
+        console.log('Pattern status migration note:', err.message);
     }
 
     // Create virtual table for vector search if extension loaded
@@ -296,12 +334,16 @@ function listConversations({ limit = 50, offset = 0, outcome = null, orderBy = '
 }
 
 /**
- * Mark a conversation as abandoned
+ * Mark a conversation as abandoned and timestamp when it happened.
+ * Only transitions in_progress → abandoned (doesn't downgrade converted or contact_captured).
  */
 function markAbandoned(sessionId) {
     const db = getDb();
-    db.prepare('UPDATE conversations SET outcome = ? WHERE id = ? AND outcome = ?')
-        .run('abandoned', sessionId, 'in_progress');
+    db.prepare(`
+        UPDATE conversations
+        SET outcome = 'abandoned', abandoned_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND outcome = 'in_progress'
+    `).run(sessionId);
 }
 
 /**
@@ -311,6 +353,129 @@ function markConverted(sessionId) {
     const db = getDb();
     db.prepare('UPDATE conversations SET outcome = ? WHERE id = ?')
         .run('converted', sessionId);
+}
+
+/**
+ * Record that the model called show_booking_calendar this turn.
+ * Stores the reason the model gave so we can attribute booking triggers later.
+ * This records INTENT to book, not actual booking (that comes via Calendly webhook).
+ */
+function setBookingTriggerReason(sessionId, reason) {
+    const db = getDb();
+    db.prepare('UPDATE conversations SET booking_trigger_reason = ? WHERE id = ? AND booking_trigger_reason IS NULL')
+        .run(reason, sessionId);
+}
+
+/**
+ * Confirm a booking. Two paths:
+ *   - Webhook path: pass { email, eventId } to match a conversation by email
+ *   - Admin/manual path: pass { sessionId } to confirm a specific conversation directly
+ * Idempotent via booking_event_id (if provided) and via the booking_confirmed flag.
+ * Returns { matched, alreadyConfirmed, conversationId }.
+ */
+function confirmBooking({ email = null, sessionId = null, eventId = null }) {
+    const db = getDb();
+
+    // Idempotency via Calendly event id
+    if (eventId) {
+        const existing = db.prepare('SELECT id FROM conversations WHERE booking_event_id = ?').get(eventId);
+        if (existing) {
+            return { matched: true, alreadyConfirmed: true, conversationId: existing.id };
+        }
+    }
+
+    let conversationId = null;
+
+    if (sessionId) {
+        // Direct confirmation (admin or internal caller knows the conversation)
+        const row = db.prepare('SELECT id, booking_confirmed FROM conversations WHERE id = ?').get(sessionId);
+        if (!row) return { matched: false, alreadyConfirmed: false, conversationId: null };
+        if (row.booking_confirmed) return { matched: true, alreadyConfirmed: true, conversationId: row.id };
+        conversationId = row.id;
+    } else if (email) {
+        // Webhook path: match the most recent unconfirmed conversation for this email,
+        // accepting any outcome within the last 30 days since visitors often book
+        // after abandoning the chat.
+        const match = db.prepare(`
+            SELECT id
+            FROM conversations
+            WHERE LOWER(lead_email) = LOWER(?)
+              AND booking_confirmed = 0
+              AND datetime(created_at, '+30 days') > datetime('now')
+            ORDER BY
+                CASE outcome
+                    WHEN 'in_progress' THEN 1
+                    WHEN 'contact_captured' THEN 2
+                    WHEN 'abandoned' THEN 3
+                    ELSE 4
+                END,
+                updated_at DESC
+            LIMIT 1
+        `).get(email);
+        if (!match) return { matched: false, alreadyConfirmed: false, conversationId: null };
+        conversationId = match.id;
+    } else {
+        return { matched: false, alreadyConfirmed: false, conversationId: null };
+    }
+
+    db.prepare(`
+        UPDATE conversations
+        SET booking_confirmed = 1,
+            booking_confirmed_at = CURRENT_TIMESTAMP,
+            booking_event_id = COALESCE(?, booking_event_id),
+            outcome = 'converted'
+        WHERE id = ?
+    `).run(eventId, conversationId);
+
+    return { matched: true, alreadyConfirmed: false, conversationId };
+}
+
+/**
+ * Promote quarantined patterns whose source conversation has booking_confirmed=1.
+ * Returns the number of patterns promoted.
+ */
+function promoteQuarantinedPatterns() {
+    const db = getDb();
+    const result = db.prepare(`
+        UPDATE successful_patterns
+        SET status = 'active'
+        WHERE status = 'quarantined'
+          AND conversation_id IN (
+              SELECT id FROM conversations WHERE booking_confirmed = 1
+          )
+    `).run();
+    return result.changes || 0;
+}
+
+/**
+ * Archive quarantined patterns older than N days whose source conversation
+ * never got a booking confirmation. Prevents the quarantine queue from
+ * growing unbounded and keeps the learning signal honest.
+ */
+function archiveStaleQuarantinedPatterns(daysThreshold = 7) {
+    const db = getDb();
+    const result = db.prepare(`
+        UPDATE successful_patterns
+        SET status = 'archived'
+        WHERE status = 'quarantined'
+          AND datetime(created_at, '+' || ? || ' days') < datetime('now')
+    `).run(daysThreshold);
+    return result.changes || 0;
+}
+
+/**
+ * Counts of patterns by status for admin visibility.
+ */
+function getPatternStatusCounts() {
+    const db = getDb();
+    return db.prepare(`
+        SELECT status, COUNT(*) as count
+        FROM successful_patterns
+        GROUP BY status
+    `).all().reduce((acc, row) => {
+        acc[row.status] = row.count;
+        return acc;
+    }, { active: 0, quarantined: 0, archived: 0 });
 }
 
 // ============================================
@@ -376,17 +541,22 @@ function updateMessageEmbedding(messageId, embedding) {
 // ============================================
 
 /**
- * Create a successful pattern
+ * Create a successful pattern.
+ * Auto-tagged patterns default to 'quarantined' status and only become retrievable
+ * after the Calendly webhook confirms the source conversation actually booked.
+ * Manual/seeded patterns default to 'active'.
  */
 function createPattern(data) {
     const db = getDb();
 
     const embeddingBlob = data.embedding ? Buffer.from(new Float32Array(data.embedding).buffer) : null;
+    const taggedBy = data.tagged_by || 'auto';
+    const status = data.status || (taggedBy === 'auto' ? 'quarantined' : 'active');
 
     const result = db.prepare(`
         INSERT INTO successful_patterns
-        (conversation_id, pattern_type, title, description, messages_json, embedding, booking_achieved, tagged_by, confidence_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (conversation_id, pattern_type, title, description, messages_json, embedding, booking_achieved, tagged_by, confidence_score, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         data.conversation_id || null,
         data.pattern_type,
@@ -395,8 +565,9 @@ function createPattern(data) {
         JSON.stringify(data.messages),
         embeddingBlob,
         data.booking_achieved ? 1 : 0,
-        data.tagged_by || 'auto',
-        data.confidence_score || 0
+        taggedBy,
+        data.confidence_score || 0,
+        status
     );
 
     // Add to vector index if available
@@ -425,9 +596,10 @@ function getPattern(patternId) {
 }
 
 /**
- * List successful patterns
+ * List successful patterns. Default scope is 'active' so admin views don't
+ * see quarantined noise unless explicitly requested.
  */
-function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfidence = 0 } = {}) {
+function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfidence = 0, status = 'active' } = {}) {
     const db = getDb();
 
     let query = 'SELECT * FROM successful_patterns WHERE confidence_score >= ?';
@@ -436,6 +608,11 @@ function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfiden
     if (pattern_type) {
         query += ' AND pattern_type = ?';
         params.push(pattern_type);
+    }
+
+    if (status && status !== 'all') {
+        query += ' AND status = ?';
+        params.push(status);
     }
 
     query += ' ORDER BY confidence_score DESC, created_at DESC LIMIT ? OFFSET ?';
@@ -473,20 +650,23 @@ function deletePattern(patternId) {
 }
 
 /**
- * Search for similar patterns using vector similarity
+ * Search for similar patterns using vector similarity.
+ * Filters to status='active' only. Quarantined patterns are never surfaced to the model.
  */
 function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6) {
     const db = getDb();
 
     if (!vecLoaded) {
-        // Fallback: return recent high-confidence patterns
-        return listPatterns({ limit, minConfidence: 0.7 });
+        // Fallback: return recent high-confidence ACTIVE patterns
+        return listPatterns({ limit, minConfidence: 0.7, status: 'active' });
     }
 
     try {
         const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
-        // Use sqlite-vec to find similar patterns
+        // Fetch more than limit from vector index, then filter by status in the app
+        // (vec MATCH doesn't compose well with WHERE clauses on the joined table).
+        const fetchLimit = Math.max(limit * 3, 10);
         const results = db.prepare(`
             SELECT
                 vp.pattern_id,
@@ -497,23 +677,23 @@ function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6) {
             WHERE vp.embedding MATCH ?
             ORDER BY vp.distance ASC
             LIMIT ?
-        `).all(embeddingStr, limit);
+        `).all(embeddingStr, fetchLimit);
 
-        // Convert distance to similarity and filter
         return results
+            .filter(r => r.status === 'active')
             .map(r => {
-                const similarity = 1 - r.distance; // Convert L2 distance to similarity
+                const similarity = 1 - r.distance;
                 return {
                     ...r,
                     similarity,
                     messages: JSON.parse(r.messages_json)
                 };
             })
-            .filter(r => r.similarity >= minSimilarity);
+            .filter(r => r.similarity >= minSimilarity)
+            .slice(0, limit);
     } catch (err) {
         console.error('Vector search failed:', err.message);
-        // Fallback to recent high-confidence patterns
-        return listPatterns({ limit, minConfidence: 0.7 });
+        return listPatterns({ limit, minConfidence: 0.7, status: 'active' });
     }
 }
 
@@ -827,6 +1007,8 @@ module.exports = {
     markConverted,
     setConversationIntent,
     getConversationIntent,
+    setBookingTriggerReason,
+    confirmBooking,
 
     // Messages
     addMessage,
@@ -842,6 +1024,9 @@ module.exports = {
     deletePattern,
     searchSimilarPatterns,
     patternExistsForConversation,
+    promoteQuarantinedPatterns,
+    archiveStaleQuarantinedPatterns,
+    getPatternStatusCounts,
 
     // Follow-ups
     getFollowUpCandidates,

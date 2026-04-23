@@ -67,6 +67,21 @@ const config = {
         ],
     },
 
+    // Calendly webhook (P3-3): receives invitee.created events to confirm bookings.
+    // If CALENDLY_WEBHOOK_SECRET is unset, signature verification is skipped (dev mode).
+    calendly: {
+        webhookSecret: process.env.CALENDLY_WEBHOOK_SECRET || null,
+        signatureToleranceSec: 300, // reject webhook requests older than 5 minutes
+    },
+
+    // Pattern quarantine (P2-3): new auto-tagged patterns land as 'quarantined' and
+    // only promote to 'active' after the source conversation's booking is confirmed.
+    // Anything still quarantined after this many days is archived to keep the pool honest.
+    patterns: {
+        quarantineMaxDays: 7,
+        maintenanceIntervalMs: 30 * 60 * 1000, // 30 minutes
+    },
+
     // Rate limiting
     rateLimit: {
         windowMs: 60 * 1000,  // 1 minute
