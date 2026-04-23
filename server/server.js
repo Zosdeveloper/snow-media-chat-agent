@@ -26,6 +26,7 @@ const knowledgeBase = require('./services/knowledgeBase');
 const followUpService = require('./services/followUpService');
 const spamFilter = require('./services/spamFilter');
 const intentClassifier = require('./services/intentClassifier');
+const qualificationService = require('./services/qualificationService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -285,8 +286,17 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // Add A/B variant context
         contextMessage += promptBuilder.buildVariantContext(session.promptVariant);
 
-        // Add conversation stage guidance
-        contextMessage += promptBuilder.getStageGuidance(session);
+        // Add qualification signal score (soft tiebreaker, NOT a booking gate).
+        // Replaces the old message-count-driven stage guidance. The model uses
+        // this to decide whether a fit-check question is worth asking, but
+        // never to block booking.
+        try {
+            const qualification = qualificationService.detectSignals(session, message);
+            contextMessage += '\n' + qualification.description;
+            session.qualificationScore = qualification.score;
+        } catch (err) {
+            console.error('Qualification signal error:', err.message);
+        }
 
         // Retrieve few-shot patterns for the dynamic system block
         let ragAddendum = '';
