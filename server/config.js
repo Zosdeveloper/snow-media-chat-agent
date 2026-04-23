@@ -25,10 +25,15 @@ const config = {
     },
 
     // RAG settings
+    // Two-lane retrieval: conversation patterns (style) and knowledge facts (grounding).
+    // Different thresholds because facts are short snippets and score lower on cosine
+    // than multi-turn dialogue patterns.
     rag: {
-        maxPatterns: 3,           // Number of similar patterns to retrieve
-        similarityThreshold: 0.6, // Minimum similarity score
-        maxExampleMessages: 6,    // Max messages per example
+        maxPatterns: 2,           // Conversation examples to retrieve
+        maxFacts: 2,              // Knowledge facts (case studies, services, FAQs)
+        similarityThreshold: 0.6, // Pattern minimum similarity
+        factsSimilarityThreshold: 0.5, // Facts minimum similarity (more permissive)
+        maxExampleMessages: 6,    // Max messages per conversation example
     },
 
     // Auto-tagging thresholds

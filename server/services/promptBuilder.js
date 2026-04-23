@@ -4,17 +4,40 @@
  */
 
 /**
- * Build the retrieval addendum string for the dynamic system block.
- * Returns '' when no patterns retrieved. Caller assembles this into a
- * non-cached second system block so the static base stays cacheable.
+ * Build the conversation-pattern addendum (Lane A, style few-shot).
+ * Returns '' when no patterns retrieved.
  * @param {Object} ragContext - Context from RAG service
- * @returns {string} - Formatted examples section, or '' if no patterns
+ * @returns {string}
  */
 function buildRagAddendum(ragContext) {
-    if (!ragContext || !ragContext.hasContext || !ragContext.patterns.length) {
+    if (!ragContext || !ragContext.patterns || !ragContext.patterns.length) {
         return '';
     }
     return formatExamples(ragContext.patterns);
+}
+
+/**
+ * Build the knowledge-facts addendum (Lane B, grounding).
+ * These are case studies, services, FAQs, resources. They're rendered as a
+ * bulleted facts block with an explicit citation rule so the model grounds
+ * claims rather than copying conversation style.
+ * @param {Object} ragContext - Context from RAG service
+ * @returns {string}
+ */
+function buildFactsAddendum(ragContext) {
+    if (!ragContext || !ragContext.facts || !ragContext.facts.length) {
+        return '';
+    }
+    const lines = [
+        '<approved_facts>',
+        'Facts you MAY cite in this turn. These are the only verified results, services, and FAQs you have for this conversation. Do not extend a client result to a different niche, and do not invent numbers.'
+    ];
+    for (const fact of ragContext.facts) {
+        const typeTag = fact.type ? `[${fact.type}] ` : '';
+        lines.push(`- ${typeTag}${fact.title}: ${fact.content}`);
+    }
+    lines.push('</approved_facts>');
+    return lines.join('\n');
 }
 
 /**
@@ -389,6 +412,7 @@ function buildVariantContext(variant) {
 
 module.exports = {
     buildRagAddendum,
+    buildFactsAddendum,
     buildLeadContext,
     buildProgressSummary,
     getConversationStage,

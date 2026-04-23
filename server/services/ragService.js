@@ -8,41 +8,51 @@ const embeddingService = require('./embeddingService');
 const config = require('../config');
 
 /**
- * Get relevant context for the current conversation
+ * Get relevant context for the current conversation.
+ * Two-lane retrieval: conversation patterns (style few-shot) and knowledge facts
+ * (case studies, services, FAQs). Each lane has its own similarity threshold.
  * @param {Object} session - Current session with messages and leadData
  * @param {string} currentMessage - The current user message
- * @returns {Promise<Object>} - Relevant patterns and context
+ * @returns {Promise<Object>} - { patterns, facts, hasContext }
  */
 async function getRelevantContext(session, currentMessage) {
     const result = {
         patterns: [],
+        facts: [],
         hasContext: false
     };
 
-    // Skip if embedding service not available
     if (!embeddingService.isAvailable()) {
         return result;
     }
 
     try {
-        // Build context from recent conversation + current message
         const contextText = buildContextText(session, currentMessage);
-
-        // Generate query embedding
         const queryEmbedding = await embeddingService.generateQueryEmbedding(contextText);
-        if (!queryEmbedding) {
-            return result;
-        }
+        if (!queryEmbedding) return result;
 
-        // Search for similar patterns
+        // Lane A: conversation patterns (style). tagged_by != 'seed'
         const patterns = db.searchSimilarPatterns(
             queryEmbedding,
             config.rag.maxPatterns,
-            config.rag.similarityThreshold
+            config.rag.similarityThreshold,
+            'patterns'
+        );
+
+        // Lane B: knowledge facts (grounding). tagged_by = 'seed'
+        const facts = db.searchSimilarPatterns(
+            queryEmbedding,
+            config.rag.maxFacts,
+            config.rag.factsSimilarityThreshold,
+            'facts'
         );
 
         if (patterns && patterns.length > 0) {
             result.patterns = patterns.map(formatPatternForContext);
+            result.hasContext = true;
+        }
+        if (facts && facts.length > 0) {
+            result.facts = facts.map(formatFactForContext);
             result.hasContext = true;
         }
     } catch (error) {
@@ -50,6 +60,22 @@ async function getRelevantContext(session, currentMessage) {
     }
 
     return result;
+}
+
+/**
+ * Format a knowledge fact (case study, service, FAQ) for injection.
+ * Facts are short blurbs, not dialogue, so the shape differs from patterns.
+ */
+function formatFactForContext(fact) {
+    const firstMsg = Array.isArray(fact.messages) && fact.messages[0] ? fact.messages[0] : null;
+    const content = firstMsg ? firstMsg.content : (fact.description || '');
+    return {
+        title: fact.title,
+        type: fact.pattern_type,
+        industry: fact.description,
+        content,
+        similarity: fact.similarity || 0
+    };
 }
 
 /**

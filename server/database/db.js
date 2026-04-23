@@ -186,6 +186,43 @@ async function initialize() {
         console.log('Booking columns migration note:', err.message);
     }
 
+    // Migration: tool_events and guardrail_events instrumentation tables (P3-1, P3-2)
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_instrumentation_tables'").get();
+        if (!alreadyRun) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS tool_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT,
+                    tool_name TEXT NOT NULL,
+                    trigger_reason TEXT,
+                    user_message_index INTEGER,
+                    input_json TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_tool_events_conversation ON tool_events(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool_name, created_at);
+
+                CREATE TABLE IF NOT EXISTS guardrail_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT,
+                    pattern_name TEXT NOT NULL,
+                    matched_text TEXT,
+                    full_message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_guardrail_events_conversation ON guardrail_events(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_guardrail_events_pattern ON guardrail_events(pattern_name, created_at);
+            `);
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_instrumentation_tables')").run();
+            console.log('Added tool_events and guardrail_events tables');
+        }
+    } catch (err) {
+        console.log('Instrumentation migration note:', err.message);
+    }
+
     // Migration: pattern status column for quarantine flow (P2-3)
     try {
         const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_pattern_status_column'").get();
@@ -599,7 +636,7 @@ function getPattern(patternId) {
  * List successful patterns. Default scope is 'active' so admin views don't
  * see quarantined noise unless explicitly requested.
  */
-function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfidence = 0, status = 'active' } = {}) {
+function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfidence = 0, status = 'active', taggedByFilter = null } = {}) {
     const db = getDb();
 
     let query = 'SELECT * FROM successful_patterns WHERE confidence_score >= ?';
@@ -613,6 +650,12 @@ function listPatterns({ limit = 50, offset = 0, pattern_type = null, minConfiden
     if (status && status !== 'all') {
         query += ' AND status = ?';
         params.push(status);
+    }
+
+    if (taggedByFilter === 'seed_only') {
+        query += " AND tagged_by = 'seed'";
+    } else if (taggedByFilter === 'non_seed') {
+        query += " AND tagged_by != 'seed'";
     }
 
     query += ' ORDER BY confidence_score DESC, created_at DESC LIMIT ? OFFSET ?';
@@ -650,23 +693,33 @@ function deletePattern(patternId) {
 }
 
 /**
- * Search for similar patterns using vector similarity.
- * Filters to status='active' only. Quarantined patterns are never surfaced to the model.
+ * Search for similar items using vector similarity.
+ * @param {Float32Array|number[]} queryEmbedding
+ * @param {Object} opts
+ *   - limit: number of results to return
+ *   - minSimilarity: cosine similarity floor
+ *   - lane: 'patterns' (conversation examples, tagged_by != 'seed') or
+ *           'facts' (knowledge base, tagged_by = 'seed')
+ * Filters to status='active' in all cases. Quarantined patterns are never surfaced.
  */
-function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6) {
+function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6, lane = 'patterns') {
     const db = getDb();
 
     if (!vecLoaded) {
-        // Fallback: return recent high-confidence ACTIVE patterns
-        return listPatterns({ limit, minConfidence: 0.7, status: 'active' });
+        return listPatterns({
+            limit,
+            minConfidence: 0.7,
+            status: 'active',
+            taggedByFilter: lane === 'facts' ? 'seed_only' : 'non_seed'
+        });
     }
 
     try {
         const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
-        // Fetch more than limit from vector index, then filter by status in the app
-        // (vec MATCH doesn't compose well with WHERE clauses on the joined table).
-        const fetchLimit = Math.max(limit * 3, 10);
+        // Fetch more than limit from vec index; lane filtering happens in the app
+        // (vec MATCH doesn't compose with WHERE clauses on the joined table).
+        const fetchLimit = Math.max(limit * 4, 15);
         const results = db.prepare(`
             SELECT
                 vp.pattern_id,
@@ -679,21 +732,28 @@ function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6) {
             LIMIT ?
         `).all(embeddingStr, fetchLimit);
 
+        const laneMatches = (r) => {
+            if (lane === 'facts') return r.tagged_by === 'seed';
+            return r.tagged_by !== 'seed';
+        };
+
         return results
-            .filter(r => r.status === 'active')
-            .map(r => {
-                const similarity = 1 - r.distance;
-                return {
-                    ...r,
-                    similarity,
-                    messages: JSON.parse(r.messages_json)
-                };
-            })
+            .filter(r => r.status === 'active' && laneMatches(r))
+            .map(r => ({
+                ...r,
+                similarity: 1 - r.distance,
+                messages: JSON.parse(r.messages_json)
+            }))
             .filter(r => r.similarity >= minSimilarity)
             .slice(0, limit);
     } catch (err) {
         console.error('Vector search failed:', err.message);
-        return listPatterns({ limit, minConfidence: 0.7, status: 'active' });
+        return listPatterns({
+            limit,
+            minConfidence: 0.7,
+            status: 'active',
+            taggedByFilter: lane === 'facts' ? 'seed_only' : 'non_seed'
+        });
     }
 }
 
@@ -704,6 +764,83 @@ function patternExistsForConversation(conversationId) {
     const db = getDb();
     const result = db.prepare('SELECT COUNT(*) as count FROM successful_patterns WHERE conversation_id = ?').get(conversationId);
     return result.count > 0;
+}
+
+// ============================================
+// INSTRUMENTATION: TOOL EVENTS AND GUARDRAIL EVENTS
+// ============================================
+
+/**
+ * Log a tool call for attribution analytics.
+ * Fire-and-forget: errors are swallowed so chat flow is never blocked.
+ */
+function logToolEvent({ conversationId, toolName, triggerReason = null, userMessageIndex = null, input = null }) {
+    try {
+        const db = getDb();
+        db.prepare(`
+            INSERT INTO tool_events (conversation_id, tool_name, trigger_reason, user_message_index, input_json)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            conversationId || null,
+            toolName,
+            triggerReason,
+            userMessageIndex,
+            input ? JSON.stringify(input) : null
+        );
+    } catch (err) {
+        console.error('logToolEvent error:', err.message);
+    }
+}
+
+/**
+ * Get tool-event counts for a time window. Used by the admin analytics query.
+ */
+function getToolEventStats(days = 14) {
+    const db = getDb();
+    return db.prepare(`
+        SELECT
+            tool_name,
+            trigger_reason,
+            COUNT(*) as count
+        FROM tool_events
+        WHERE datetime(created_at, '+' || ? || ' days') > datetime('now')
+        GROUP BY tool_name, trigger_reason
+        ORDER BY tool_name, count DESC
+    `).all(days);
+}
+
+/**
+ * Log a guardrail tripwire match (suspicious output pattern).
+ * Fire-and-forget.
+ */
+function logGuardrailEvent({ conversationId, patternName, matchedText = null, fullMessage = null }) {
+    try {
+        const db = getDb();
+        db.prepare(`
+            INSERT INTO guardrail_events (conversation_id, pattern_name, matched_text, full_message)
+            VALUES (?, ?, ?, ?)
+        `).run(
+            conversationId || null,
+            patternName,
+            matchedText,
+            fullMessage ? fullMessage.substring(0, 2000) : null
+        );
+    } catch (err) {
+        console.error('logGuardrailEvent error:', err.message);
+    }
+}
+
+/**
+ * Recent guardrail trips for admin review.
+ */
+function getRecentGuardrailEvents(limit = 50) {
+    const db = getDb();
+    return db.prepare(`
+        SELECT id, conversation_id, pattern_name, matched_text, full_message, created_at
+        FROM guardrail_events
+        ORDER BY created_at DESC
+        LIMIT ?
+    `).all(limit);
 }
 
 // ============================================
@@ -1027,6 +1164,12 @@ module.exports = {
     promoteQuarantinedPatterns,
     archiveStaleQuarantinedPatterns,
     getPatternStatusCounts,
+
+    // Instrumentation (P3-1, P3-2)
+    logToolEvent,
+    getToolEventStats,
+    logGuardrailEvent,
+    getRecentGuardrailEvents,
 
     // Follow-ups
     getFollowUpCandidates,

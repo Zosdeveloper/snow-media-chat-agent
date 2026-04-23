@@ -298,11 +298,15 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             console.error('Qualification signal error:', err.message);
         }
 
-        // Retrieve few-shot patterns for the dynamic system block
+        // Two-lane retrieval for the dynamic system block:
+        //   Lane A (patterns) = conversation style few-shot
+        //   Lane B (facts)    = grounded citations (case studies, services, FAQs)
         let ragAddendum = '';
+        let factsAddendum = '';
         try {
             const ragContext = await ragService.getRelevantContext(session, message);
             ragAddendum = promptBuilder.buildRagAddendum(ragContext);
+            factsAddendum = promptBuilder.buildFactsAddendum(ragContext);
         } catch (err) {
             console.error('Error getting RAG context:', err.message);
         }
@@ -312,11 +316,16 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             contextMessage = `\n[CONVERSATION HISTORY SUMMARY: ${session.conversationSummary}]` + contextMessage;
         }
 
-        // Assemble the dynamic (non-cached) system block. Keeping this separate
-        // from SYSTEM_PROMPT lets Anthropic prompt caching hit on the static base.
-        const dynamicSystemBlock =
-            '<session_context>' + contextMessage + '\n</session_context>' +
-            (ragAddendum ? '\n\n' + ragAddendum : '');
+        // Assemble the dynamic (non-cached) system block. Static SYSTEM_PROMPT
+        // stays in block 1 for caching; this is block 2.
+        // Order within the dynamic block: session signals, then approved facts
+        // (grounding), then conversation examples (style). Facts come first so
+        // the model sees verified claims before any mimicry material.
+        const dynamicSystemBlock = [
+            '<session_context>' + contextMessage + '\n</session_context>',
+            factsAddendum,
+            ragAddendum
+        ].filter(Boolean).join('\n\n');
 
         // Messages array is unchanged from session history (context now lives in system block 2)
         const messagesForClaude = session.messages;
@@ -427,10 +436,20 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         let showBookingCalendar = false;
         let suggestedResource = null;
 
+        const userMsgIndex = session.messages.filter(m => m.role === 'user').length;
         for (const block of response.content) {
             if (block.type === 'text') {
                 assistantMessage = block.text;
             } else if (block.type === 'tool_use') {
+                // Log every tool call for attribution analytics (P3-1)
+                db.logToolEvent({
+                    conversationId: sessionId,
+                    toolName: block.name,
+                    triggerReason: block.input?.trigger_reason || null,
+                    userMessageIndex: userMsgIndex,
+                    input: block.input
+                });
+
                 switch (block.name) {
                     case 'show_booking_calendar':
                         showBookingCalendar = true;
@@ -529,17 +548,31 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             }
         }
 
-        // Output validation - flag potentially hallucinated content
+        // Output guardrail filter (P3-2). Log-only for now; persist every trip
+        // to guardrail_events so we can audit patterns weekly before turning on
+        // automated replacement.
         const suspiciousPatterns = [
-            { pattern: /\b[5-9]\d{2,}%|\b[1-9]\d{3,}%/, reason: 'Unrealistic percentage' },
-            { pattern: /\bguarantee\b/i, reason: 'Guarantee language' },
-            { pattern: /\b100%\s+(success|guaranteed|certain)/i, reason: 'Absolute promise' },
-            { pattern: /\$\d{1,3}(?:,\d{3})*\s+(?:per|a)\s+month/i, reason: 'Specific pricing mentioned' }
+            { name: 'unrealistic_percentage', pattern: /\b[5-9]\d{2,}%|\b[1-9]\d{3,}%/, reason: 'Unrealistic percentage' },
+            { name: 'guarantee_language', pattern: /\b(?:guarantee|guaranteed|i promise|we promise|legally binding|binding\s+contract)\b/i, reason: 'Guarantee or commitment language' },
+            { name: 'absolute_promise', pattern: /\b100%\s+(?:success|guaranteed|certain)/i, reason: 'Absolute promise' },
+            { name: 'specific_pricing', pattern: /\$\d{1,3}(?:,\d{3})*\s+(?:per|a|\/)\s*(?:mo|month)/i, reason: 'Specific pricing mentioned' },
+            { name: 'em_dash_leak', pattern: /[–—]/, reason: 'Em dash or en dash in output' },
+            { name: 'banned_phrase_happy_to', pattern: /\b(?:happy to|i'?d be happy|feel free to|don'?t hesitate)\b/i, reason: 'Banned phrase' },
+            { name: 'banned_phrase_antithesis', pattern: /\b(?:it'?s not just\s+\w+[,]?\s+it'?s|not only\s+\w+,?\s+but also)\b/i, reason: 'Antithesis formula' },
+            { name: 'banned_phrase_transitions', pattern: /\b(?:moreover|furthermore|let'?s dive in|let'?s unpack|game[- ]changer|transformative)\b/i, reason: 'Banned transition or engagement theater' },
+            { name: 'timeframe_claim', pattern: /\bin\s+(?:\d+\s+(?:days?|weeks?|months?)|a\s+(?:week|month)|[1-9]\d?\s*-\s*\d+\s+(?:days?|weeks?|months?))\b/i, reason: 'Specific timeframe claim' }
         ];
 
-        for (const { pattern, reason } of suspiciousPatterns) {
-            if (pattern.test(assistantMessage)) {
-                console.warn(`[FLAGGED RESPONSE] ${reason}:`, assistantMessage.substring(0, 200));
+        for (const { name, pattern, reason } of suspiciousPatterns) {
+            const match = assistantMessage.match(pattern);
+            if (match) {
+                console.warn(`[GUARDRAIL] ${reason}:`, assistantMessage.substring(0, 200));
+                db.logGuardrailEvent({
+                    conversationId: sessionId,
+                    patternName: name,
+                    matchedText: match[0],
+                    fullMessage: assistantMessage
+                });
             }
         }
 
