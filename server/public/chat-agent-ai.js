@@ -93,6 +93,18 @@ class SnowMediaAIChatAgent {
         return sessionId;
     }
 
+    readHoneypots() {
+        const hp = {};
+        const inputs = this.chatWidget?.querySelectorAll('.snow-hp') || [];
+        inputs.forEach(input => {
+            const key = input.getAttribute('name');
+            if (!key) return;
+            const map = { website: 'hp_website', company: 'hp_company', phone_alt: 'hp_timing' };
+            hp[map[key] || ('hp_' + key)] = input.value || '';
+        });
+        return hp;
+    }
+
     getOrCreateVisitorId() {
         let visitorId = localStorage.getItem('snow_visitor_id');
         if (!visitorId) {
@@ -287,7 +299,8 @@ class SnowMediaAIChatAgent {
                     pageContext: this.pageContext,
                     utmParams: this.utmParams,
                     visitorId: this.visitorId,
-                    behaviorSignals: this.behaviorSignals
+                    behaviorSignals: this.behaviorSignals,
+                    ...this.readHoneypots()
                 })
             });
 

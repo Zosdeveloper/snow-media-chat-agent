@@ -19,6 +19,14 @@ async function checkForPatterns(sessionId, session) {
             return;
         }
 
+        // Only learn from real buyer conversations. Spam, vendor pitches, and
+        // partnership chats would drift the RAG examples if we trained on them.
+        const stored = db.getConversationIntent(sessionId);
+        const intent = stored?.intent || session.intent;
+        if (intent && intent !== 'real_lead') {
+            return;
+        }
+
         // Calculate confidence score
         const score = calculateConfidenceScore(session);
 

@@ -23,6 +23,8 @@ const alerts = require('./services/alertService');
 const SYSTEM_PROMPT = require('./prompts/systemPrompt');
 const knowledgeBase = require('./services/knowledgeBase');
 const followUpService = require('./services/followUpService');
+const spamFilter = require('./services/spamFilter');
+const intentClassifier = require('./services/intentClassifier');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -104,6 +106,18 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
 
         if (typeof sessionId !== 'string' || sessionId.length > 100) {
             return res.status(400).json({ error: 'Invalid session ID' });
+        }
+
+        // Honeypot: bots fill hidden fields, real users never see them.
+        // Return a generic response so the bot thinks it worked. Don't save anything.
+        if (spamFilter.checkHoneypot(req.body)) {
+            console.warn('[HONEYPOT] Tripped on session', sessionId);
+            return res.json({
+                message: "Thanks, I'll take a look and get back to you.",
+                quickReplies: [],
+                leadData: {},
+                sessionId,
+            });
         }
 
         // Get or create session (check in-memory first, then DB, then create new)
@@ -194,6 +208,49 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             db.addMessage(sessionId, 'user', message);
         } catch (err) {
             console.error('Error persisting user message:', err.message);
+        }
+
+        // Keyword pre-filter: only runs on the first user message.
+        // If matched, we respond with a canned deflection and skip Claude entirely.
+        // Partnership matches fall through (response: null) but tag the conversation
+        // so downstream gates know to skip RAG learning.
+        const userMessageCount = session.messages.filter(m => m.role === 'user').length;
+        if (userMessageCount === 1) {
+            const match = spamFilter.keywordFilter(message);
+            if (match) {
+                try {
+                    db.setConversationIntent(sessionId, match.intent, match.confidence, 'keyword');
+                    session.intent = match.intent;
+                } catch (err) {
+                    console.error('Error persisting intent:', err.message);
+                }
+
+                if (match.response) {
+                    console.log(`[KEYWORD FILTER] ${match.intent} match on session ${sessionId}`);
+                    session.messages.push({ role: 'assistant', content: match.response });
+                    try {
+                        db.addMessage(sessionId, 'assistant', match.response);
+                    } catch (err) {
+                        console.error('Error persisting deflection:', err.message);
+                    }
+                    return res.json({
+                        message: match.response,
+                        quickReplies: [],
+                        leadData: session.leadData,
+                        sessionId,
+                    });
+                }
+            }
+        }
+
+        // Load stored intent into session for tool-gating (carries across requests).
+        if (!session.intent) {
+            try {
+                const stored = db.getConversationIntent(sessionId);
+                if (stored?.intent) session.intent = stored.intent;
+            } catch (err) {
+                // non-fatal
+            }
         }
 
         // Build context message with lead data
@@ -311,13 +368,22 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             }
         ];
 
+        // Gate tools based on stored intent. Blocked intents never get the booking
+        // or resource tools so spam and job seekers can't waste Milos's calendar.
+        let gatedTools = tools;
+        if (spamFilter.isBlockedIntent(session.intent)) {
+            gatedTools = tools.filter(t =>
+                t.name !== 'show_booking_calendar' && t.name !== 'suggest_resource'
+            );
+        }
+
         // Call Claude API with tools
         const response = await anthropic.messages.create({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 500,
             system: enrichedPrompt,
             messages: messagesForClaude,
-            tools,
+            tools: gatedTools,
             tool_choice: { type: 'auto' }
         });
 
@@ -435,11 +501,33 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             console.error('Error persisting assistant message:', err.message);
         }
 
-        // Check for auto-tagging after enough messages (background)
-        if (session.messages.length >= config.autoTag.minMessageCount) {
+        // Check for auto-tagging after enough messages (background).
+        // Only real_lead conversations feed the RAG knowledge base so partnership /
+        // spam chats don't drift the model's voice or examples.
+        if (
+            session.messages.length >= config.autoTag.minMessageCount &&
+            (!session.intent || session.intent === 'real_lead')
+        ) {
             autoTagger.checkForPatterns(sessionId, session).catch(err => {
                 console.error('Auto-tagging error:', err.message);
             });
+        }
+
+        // Background intent classification on first user message when the
+        // keyword filter didn't already tag it. Non-blocking so no added latency.
+        if (userMessageCount === 1 && !session.intent) {
+            intentClassifier.classify(message, process.env.ANTHROPIC_API_KEY)
+                .then(result => {
+                    if (!result) return;
+                    session.intent = result.intent;
+                    try {
+                        db.setConversationIntent(sessionId, result.intent, result.confidence, 'classifier');
+                    } catch (err) {
+                        console.error('Error saving classifier intent:', err.message);
+                    }
+                    console.log(`[CLASSIFIER] session ${sessionId} -> ${result.intent} (${result.confidence})`);
+                })
+                .catch(err => console.error('Classifier error:', err.message));
         }
 
         // Human handoff detection

@@ -146,6 +146,28 @@ async function initialize() {
         }
     }
 
+    // Migration: add intent classification columns on conversations
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_intent_columns'").get();
+        if (!alreadyRun) {
+            const cols = db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name);
+            if (!cols.includes('intent')) {
+                db.exec("ALTER TABLE conversations ADD COLUMN intent TEXT");
+            }
+            if (!cols.includes('intent_confidence')) {
+                db.exec("ALTER TABLE conversations ADD COLUMN intent_confidence REAL");
+            }
+            if (!cols.includes('intent_source')) {
+                db.exec("ALTER TABLE conversations ADD COLUMN intent_source TEXT");
+            }
+            db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_intent ON conversations(intent)");
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_intent_columns')").run();
+            console.log('Added intent columns to conversations');
+        }
+    } catch (err) {
+        console.log('Intent migration note:', err.message);
+    }
+
     // Create virtual table for vector search if extension loaded
     if (vecLoaded) {
         try {
@@ -592,16 +614,39 @@ function getFollowUpCandidates(minAgeMinutes = 30) {
     const db = getDb();
     return db.prepare(`
         SELECT c.id, c.lead_name, c.lead_email, c.lead_business_type, c.outcome,
-               c.source_url, c.created_at,
+               c.source_url, c.created_at, c.intent,
                MAX(m.created_at) as last_message_at
         FROM conversations c
         JOIN messages m ON m.conversation_id = c.id
         WHERE c.lead_email IS NOT NULL
           AND c.outcome IN ('in_progress', 'contact_captured')
+          AND (c.intent IS NULL OR c.intent IN ('real_lead', 'partnership', 'unclear'))
           AND c.id NOT IN (SELECT DISTINCT conversation_id FROM follow_ups)
           AND datetime(m.created_at, '+' || ? || ' minutes') < datetime('now')
         GROUP BY c.id
     `).all(minAgeMinutes);
+}
+
+/**
+ * Set conversation intent classification.
+ * source: 'keyword' (regex match), 'classifier' (Claude), or 'manual' (admin override).
+ */
+function setConversationIntent(sessionId, intent, confidence = null, source = 'classifier') {
+    const db = getDb();
+    db.prepare(`
+        UPDATE conversations
+        SET intent = ?, intent_confidence = ?, intent_source = ?
+        WHERE id = ?
+    `).run(intent, confidence, source, sessionId);
+}
+
+/**
+ * Get stored intent for a conversation.
+ */
+function getConversationIntent(sessionId) {
+    const db = getDb();
+    const row = db.prepare('SELECT intent, intent_confidence, intent_source FROM conversations WHERE id = ?').get(sessionId);
+    return row || null;
 }
 
 /**
@@ -780,6 +825,8 @@ module.exports = {
     listConversations,
     markAbandoned,
     markConverted,
+    setConversationIntent,
+    getConversationIntent,
 
     // Messages
     addMessage,

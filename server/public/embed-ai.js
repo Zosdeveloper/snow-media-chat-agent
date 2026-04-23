@@ -410,6 +410,18 @@
         .calendly-popup {
             z-index: 2147483648 !important;
         }
+
+        /* Honeypot fields: invisible to humans, bots that fill every field get flagged */
+        #snow-chat-widget .snow-hp {
+            position: absolute !important;
+            left: -9999px !important;
+            top: -9999px !important;
+            width: 1px !important;
+            height: 1px !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            tab-index: -1 !important;
+        }
     `;
     document.head.appendChild(style);
 
@@ -460,6 +472,9 @@
                         </svg>
                     </button>
                 </div>
+                <input class="snow-hp" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+                <input class="snow-hp" type="text" name="company" tabindex="-1" autocomplete="off" aria-hidden="true">
+                <input class="snow-hp" type="text" name="phone_alt" tabindex="-1" autocomplete="off" aria-hidden="true">
             </div>
         `;
         document.body.appendChild(widget);
@@ -654,6 +669,17 @@
             this.getAIResponse(text);
         }
 
+        readHoneypots() {
+            const hp = {};
+            this.widget.querySelectorAll('.snow-hp').forEach(input => {
+                const key = input.getAttribute('name');
+                if (!key) return;
+                const map = { website: 'hp_website', company: 'hp_company', phone_alt: 'hp_timing' };
+                hp[map[key] || ('hp_' + key)] = input.value || '';
+            });
+            return hp;
+        }
+
         async getAIResponse(message) {
             this.isTyping = true;
             this.showTyping();
@@ -661,7 +687,7 @@
                 const res = await fetch(CONFIG.apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId: this.sessionId, message, leadData: this.leadData })
+                    body: JSON.stringify({ sessionId: this.sessionId, message, leadData: this.leadData, ...this.readHoneypots() })
                 });
                 const data = await res.json();
                 if (data.leadData) {
