@@ -10,7 +10,7 @@ AI-powered sales chat widget for The Snow Media marketing agency. The chat agent
 
 - **Backend**: Node.js + Express.js (all code in `server/`)
 - **Database**: SQLite (better-sqlite3) with sqlite-vec extension for vector search
-- **AI**: Claude API (claude-sonnet-4-20250514) for conversations
+- **AI**: Claude API (claude-sonnet-4-6) for conversations
 - **Embeddings**: Voyage AI (voyage-3-lite, 512 dimensions) for RAG similarity search
 - **Deployment**: Railway (auto-deploy from GitHub `main`)
 

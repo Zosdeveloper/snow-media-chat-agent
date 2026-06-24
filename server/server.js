@@ -419,7 +419,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
         // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
         const response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             max_tokens: 500,
             system: [
                 { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
@@ -843,7 +843,7 @@ async function summarizeMessages(messages, anthropicClient) {
         ).join('\n');
 
         const response = await anthropicClient.messages.create({
-            model: 'claude-haiku-3-20240307',
+            model: 'claude-haiku-4-5',
             max_tokens: 150,
             system: 'Summarize this chat transcript in 2-3 sentences. Note: visitor business type, pain points, contact info shared, and interest level. Be concise.',
             messages: [{ role: 'user', content: transcript }]
