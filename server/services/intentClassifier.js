@@ -7,6 +7,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const config = require('../config');
 
 const VALID_INTENTS = [
     'real_lead',
@@ -67,7 +68,7 @@ async function classify(text, apiKey) {
         const client = new Anthropic({ apiKey });
 
         const response = await client.messages.create({
-            model: 'claude-haiku-4-5-20251001',
+            model: config.models.classifier,
             max_tokens: 30,
             system: CLASSIFIER_PROMPT,
             messages: [{ role: 'user', content: text.slice(0, 1500) }],

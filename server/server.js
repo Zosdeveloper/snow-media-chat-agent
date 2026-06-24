@@ -27,6 +27,7 @@ const followUpService = require('./services/followUpService');
 const spamFilter = require('./services/spamFilter');
 const intentClassifier = require('./services/intentClassifier');
 const qualificationService = require('./services/qualificationService');
+const modelHealth = require('./services/modelHealth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -419,7 +420,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
         // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
         const response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
+            model: config.models.chat,
             max_tokens: 500,
             system: [
                 { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
@@ -843,7 +844,7 @@ async function summarizeMessages(messages, anthropicClient) {
         ).join('\n');
 
         const response = await anthropicClient.messages.create({
-            model: 'claude-haiku-4-5',
+            model: config.models.summarizer,
             max_tokens: 150,
             system: 'Summarize this chat transcript in 2-3 sentences. Note: visitor business type, pain points, contact info shared, and interest level. Be concise.',
             messages: [{ role: 'user', content: transcript }]
@@ -922,6 +923,23 @@ app.get('/api/health', (req, res) => {
     }
 
     res.json(health);
+});
+
+// Deep health check: verifies each configured Claude model is still live.
+// A retired model id returns 404 (the exact failure that silently broke chat).
+// Point an external uptime monitor (UptimeRobot / BetterStack / Railway healthcheck)
+// at this so a model that retires while the server is already running pages someone.
+// Results are cached ~5 min in modelHealth so frequent polling doesn't hammer the API.
+app.get('/api/health/model', async (req, res) => {
+    try {
+        const health = await modelHealth.checkModels({ force: req.query.force === '1' });
+        res.status(health.ok ? 200 : 503).json({
+            status: health.ok ? 'ok' : 'degraded',
+            ...health,
+        });
+    } catch (err) {
+        res.status(500).json({ status: 'error', error: err.message });
+    }
 });
 
 // Verify Calendly webhook signature.
@@ -1056,6 +1074,24 @@ async function startServer() {
             console.log(`The Snow Media AI Chat Server running on port ${PORT}`);
             console.log(`Open http://localhost:${PORT} to test the chat`);
         });
+
+        // Model preflight: verify configured models are live at boot. A retired
+        // model id 404s here, catching the exact failure that broke chat silently.
+        // Non-fatal: alert loudly but keep serving so /api/health/model still reports.
+        modelHealth.checkModels({ force: true })
+            .then(result => {
+                if (result.ok) {
+                    console.log('[MODEL PREFLIGHT] OK:', result.roles.map(r => `${r.role}=${r.model}`).join(', '));
+                } else {
+                    console.error('[MODEL PREFLIGHT] DEAD MODEL(S):', result.deadModels.join(', '));
+                    alerts.custom(
+                        'Model Unavailable',
+                        `Configured Claude model(s) returning 404: ${result.deadModels.join(', ')}. Chat is likely down. Update the model id (config.models or the CHAT_MODEL/etc. env var).`,
+                        { reason: `dead: ${result.deadModels.join(', ')}` }
+                    );
+                }
+            })
+            .catch(err => console.error('[MODEL PREFLIGHT] check failed:', err.message));
     } catch (error) {
         console.error('Failed to start server:', error);
         process.exit(1);

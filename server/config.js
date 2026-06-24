@@ -17,6 +17,17 @@ const config = {
     voyageApiKey: process.env.VOYAGE_API_KEY,
     adminApiKey: process.env.ADMIN_API_KEY,
 
+    // Claude models, centralized so a retired model ID is a one-line (or one
+    // env-var) change instead of a hunt across files. The boot preflight and
+    // /api/health/model self-test read these to verify each model is still live.
+    // Override per role via env (e.g. CHAT_MODEL=...) with no code change.
+    models: {
+        chat:       process.env.CHAT_MODEL       || 'claude-sonnet-4-6',
+        summarizer: process.env.SUMMARIZER_MODEL || 'claude-haiku-4-5',
+        followUp:   process.env.FOLLOWUP_MODEL   || 'claude-sonnet-4-6',
+        classifier: process.env.CLASSIFIER_MODEL || 'claude-haiku-4-5',
+    },
+
     // Embedding settings
     embedding: {
         model: 'voyage-3-lite',
