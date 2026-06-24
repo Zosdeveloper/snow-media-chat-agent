@@ -1105,6 +1105,8 @@ function getStats() {
             SUM(CASE WHEN outcome = 'not_qualified' THEN 1 ELSE 0 END) as not_qualified,
             SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) as abandoned,
             SUM(CASE WHEN outcome = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+            SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as booking_confirmed,
+            SUM(CASE WHEN lead_email IS NOT NULL OR lead_phone IS NOT NULL THEN 1 ELSE 0 END) as with_contact,
             AVG(message_count) as avg_messages
         FROM conversations
     `).get();

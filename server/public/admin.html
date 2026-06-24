@@ -119,7 +119,7 @@
 
         .stat-card .label {
             font-size: 13px;
-            color: #71717a;
+            color: #8b8b94;
             margin-bottom: 8px;
         }
 
@@ -176,7 +176,7 @@
             font-size: 12px;
             cursor: pointer;
             background: transparent;
-            color: #71717a;
+            color: #8b8b94;
             border: none;
         }
 
@@ -214,7 +214,7 @@
 
         .conversation-item .time {
             font-size: 11px;
-            color: #71717a;
+            color: #8b8b94;
         }
 
         .conversation-item .preview {
@@ -325,7 +325,7 @@
             align-items: center;
             justify-content: center;
             height: 100%;
-            color: #71717a;
+            color: #8b8b94;
         }
 
         .empty-state svg {
@@ -341,7 +341,7 @@
             align-items: center;
             justify-content: center;
             padding: 40px;
-            color: #71717a;
+            color: #8b8b94;
         }
 
         /* Responsive */
@@ -443,7 +443,7 @@
             padding: 12px 24px;
             background: transparent;
             border: none;
-            color: #71717a;
+            color: #8b8b94;
             font-size: 14px;
             font-weight: 500;
             cursor: pointer;
@@ -472,7 +472,7 @@
 
         .analytics-card h3 {
             font-size: 14px;
-            color: #71717a;
+            color: #8b8b94;
             margin-bottom: 16px;
             font-weight: 500;
         }
@@ -487,7 +487,7 @@
 
         .big-stat-label {
             font-size: 14px;
-            color: #71717a;
+            color: #8b8b94;
             margin-top: 4px;
         }
 
@@ -525,7 +525,7 @@
         .bar-label {
             width: 60px;
             font-size: 12px;
-            color: #71717a;
+            color: #8b8b94;
         }
 
         .bar-container {
@@ -582,11 +582,161 @@
         }
 
         .source-item .stats span {
-            color: #71717a;
+            color: #8b8b94;
         }
 
         .source-item .stats strong {
             color: #e4e4e7;
+        }
+
+        /* Hero KPI Row */
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .hero-card {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 12px;
+            padding: 22px 24px;
+        }
+
+        .hero-card.primary {
+            border-color: #14532d;
+            box-shadow: 0 0 0 1px #14532d, 0 8px 24px -14px rgba(34,197,94,0.4);
+        }
+
+        .hero-card .hero-label {
+            font-size: 13px;
+            color: #8b8b94;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .hero-card .hero-value {
+            font-size: 44px;
+            font-weight: 700;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .hero-card.primary .hero-value { color: #22c55e; }
+        .hero-card.leads .hero-value { color: #3b82f6; }
+
+        .hero-card .hero-sub {
+            font-size: 13px;
+            color: #8b8b94;
+            margin-top: 8px;
+        }
+
+        .hero-card .hero-sub strong { color: #e4e4e7; font-variant-numeric: tabular-nums; }
+
+        .hero-card .hero-extra {
+            font-size: 12px;
+            color: #22c55e;
+            margin-top: 6px;
+        }
+
+        /* Mini stat strip (demoted secondary metrics) */
+        .mini-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        .mini-stat {
+            flex: 1;
+            min-width: 130px;
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+
+        .mini-stat .mini-label {
+            font-size: 12px;
+            color: #8b8b94;
+            margin-bottom: 4px;
+        }
+
+        .mini-stat .mini-value {
+            font-size: 20px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .mini-stat.contact .mini-value { color: #3b82f6; }
+        .mini-stat.not-qualified .mini-value { color: #f59e0b; }
+        .mini-stat.abandoned .mini-value { color: #a1a1aa; }
+        .mini-stat.followup .mini-value { color: #e4e4e7; }
+        .mini-stat .mini-sub { font-size: 11px; color: #8b8b94; margin-top: 2px; }
+
+        /* Booked badge */
+        .badge-booked { background: #14532d; color: #4ade80; }
+        .detail-booked-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #14532d;
+            color: #4ade80;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 6px;
+            margin-top: 6px;
+        }
+
+        /* Experiments / A/B view */
+        .variant-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .variant-table th, .variant-table td {
+            text-align: left;
+            padding: 12px 14px;
+            border-bottom: 1px solid #27272a;
+            font-size: 14px;
+        }
+
+        .variant-table th {
+            font-size: 12px;
+            color: #8b8b94;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .variant-table td.metric { font-variant-numeric: tabular-nums; }
+        .variant-table .variant-name { font-weight: 600; }
+        .variant-table tr.winner { background: rgba(34,197,94,0.06); }
+
+        .recommendation {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-left: 3px solid #3b82f6;
+            border-radius: 8px;
+            padding: 16px 18px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #e4e4e7;
+        }
+
+        .recommendation.ready { border-left-color: #22c55e; }
+
+        .recommendation .rec-label {
+            font-size: 12px;
+            color: #8b8b94;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
         }
     </style>
 </head>
@@ -643,32 +793,50 @@
         <div class="view-tabs">
             <button class="view-tab active" data-view="conversations" onclick="switchView('conversations')">Conversations</button>
             <button class="view-tab" data-view="analytics" onclick="switchView('analytics')">Analytics</button>
+            <button class="view-tab" data-view="experiments" onclick="switchView('experiments')">Experiments</button>
         </div>
 
         <!-- Conversations View -->
         <div id="conversationsView">
 
-        <!-- Stats -->
-        <div class="stats-grid" id="statsGrid">
-            <div class="stat-card">
-                <div class="label">Total Conversations</div>
-                <div class="value" id="statTotal">-</div>
+        <!-- Hero KPIs -->
+        <div class="hero-grid">
+            <div class="hero-card primary">
+                <div class="hero-label">Booked Calls</div>
+                <div class="hero-value" id="heroBooked">-</div>
+                <div class="hero-sub"><strong id="heroBookingRate">-</strong> of conversations</div>
+                <div class="hero-extra hidden" id="heroConfirmed"></div>
             </div>
-            <div class="stat-card converted">
-                <div class="label">Converted</div>
-                <div class="value" id="statConverted">-</div>
+            <div class="hero-card leads">
+                <div class="hero-label">Leads Captured</div>
+                <div class="hero-value" id="heroLeads">-</div>
+                <div class="hero-sub"><strong id="heroLeadRate">-</strong> shared contact</div>
             </div>
-            <div class="stat-card contact">
-                <div class="label">Contact Captured</div>
-                <div class="value" id="statContact">-</div>
+            <div class="hero-card">
+                <div class="hero-label">Conversations</div>
+                <div class="hero-value" id="heroTotal">-</div>
+                <div class="hero-sub"><strong id="heroActive">-</strong> active now</div>
             </div>
-            <div class="stat-card not-qualified">
-                <div class="label">Not Qualified</div>
-                <div class="value" id="statNotQualified">-</div>
+        </div>
+
+        <!-- Secondary metrics -->
+        <div class="mini-stats">
+            <div class="mini-stat contact">
+                <div class="mini-label">Contact Captured</div>
+                <div class="mini-value" id="statContact">-</div>
             </div>
-            <div class="stat-card abandoned">
-                <div class="label">Abandoned</div>
-                <div class="value" id="statAbandoned">-</div>
+            <div class="mini-stat not-qualified">
+                <div class="mini-label">Not Qualified</div>
+                <div class="mini-value" id="statNotQualified">-</div>
+            </div>
+            <div class="mini-stat abandoned">
+                <div class="mini-label">Abandoned</div>
+                <div class="mini-value" id="statAbandoned">-</div>
+            </div>
+            <div class="mini-stat followup">
+                <div class="mini-label">Follow-ups Sent Today</div>
+                <div class="mini-value" id="statFollowSent">-</div>
+                <div class="mini-sub" id="statFollowSub"></div>
             </div>
         </div>
 
@@ -704,6 +872,7 @@
                         <div class="lead-info">
                             <h3 id="detailName">-</h3>
                             <div class="contact" id="detailContact"></div>
+                            <div id="detailBooked"></div>
                         </div>
                         <div class="outcome-actions">
                             <button class="btn btn-success btn-sm" onclick="markOutcome('converted')">Converted</button>
@@ -759,6 +928,20 @@
             </div>
         </div><!-- End Analytics View -->
 
+        <!-- Experiments View -->
+        <div id="experimentsView" class="hidden">
+            <div class="recommendation" id="abRecommendation">
+                <div class="rec-label">Recommendation</div>
+                <div id="abRecommendationText">Loading variant data...</div>
+            </div>
+            <div class="analytics-card">
+                <h3>Prompt Variant Performance (A/B)</h3>
+                <div id="abTableWrap">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+        </div><!-- End Experiments View -->
+
     </div>
 
     <script>
@@ -787,7 +970,7 @@
                     document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
                     tab.classList.add('active');
                     currentFilter = tab.dataset.filter;
-                    renderConversations();
+                    loadConversations();
                 });
             });
         });
@@ -867,7 +1050,7 @@
         }
 
         async function loadDashboard() {
-            await Promise.all([loadStats(), loadConversations()]);
+            await Promise.all([loadStats(), loadFollowUpStats(), loadConversations()]);
         }
 
         async function loadStats() {
@@ -876,20 +1059,66 @@
                     headers: { 'X-Admin-Api-Key': apiKey }
                 });
                 const data = await res.json();
+                const c = (data.database && data.database.conversations) || {};
 
-                document.getElementById('statTotal').textContent = data.database.conversations.total;
-                document.getElementById('statConverted').textContent = data.database.conversations.converted;
-                document.getElementById('statContact').textContent = data.database.conversations.contact_captured || 0;
-                document.getElementById('statNotQualified').textContent = data.database.conversations.not_qualified || 0;
-                document.getElementById('statAbandoned').textContent = data.database.conversations.abandoned;
+                const total = c.total || 0;
+                const booked = c.converted || 0;
+                const leads = c.with_contact || 0;
+                const pct = (n) => total > 0 ? Math.round((n / total) * 100) + '%' : '0%';
+
+                // Hero KPIs
+                document.getElementById('heroBooked').textContent = booked;
+                document.getElementById('heroBookingRate').textContent = pct(booked);
+                document.getElementById('heroLeads').textContent = leads;
+                document.getElementById('heroLeadRate').textContent = pct(leads);
+                document.getElementById('heroTotal').textContent = total;
+                document.getElementById('heroActive').textContent = c.in_progress || 0;
+
+                // Calendly-confirmed bookings (webhook truth) shown only when present
+                const confirmed = c.booking_confirmed || 0;
+                const confirmedEl = document.getElementById('heroConfirmed');
+                if (confirmed > 0) {
+                    confirmedEl.textContent = `✓ ${confirmed} confirmed via Calendly`;
+                    confirmedEl.classList.remove('hidden');
+                } else {
+                    confirmedEl.classList.add('hidden');
+                }
+
+                // Secondary metrics
+                document.getElementById('statContact').textContent = c.contact_captured || 0;
+                document.getElementById('statNotQualified').textContent = c.not_qualified || 0;
+                document.getElementById('statAbandoned').textContent = c.abandoned || 0;
             } catch (e) {
                 console.error('Failed to load stats:', e);
             }
         }
 
+        async function loadFollowUpStats() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/follow-ups/stats`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                if (!res.ok) throw new Error('Failed');
+                const data = await res.json();
+
+                document.getElementById('statFollowSent').textContent = data.sent_today != null ? data.sent_today : 0;
+                const parts = [];
+                if (data.daily_limit != null) parts.push(`limit ${data.daily_limit}`);
+                if (data.pending) parts.push(`${data.pending} pending`);
+                if (data.failed) parts.push(`${data.failed} failed`);
+                document.getElementById('statFollowSub').textContent = parts.join(' · ');
+            } catch (e) {
+                console.error('Failed to load follow-up stats:', e);
+                document.getElementById('statFollowSent').textContent = '0';
+            }
+        }
+
         async function loadConversations() {
             try {
-                const res = await fetch(`${API_BASE}/api/admin/conversations?limit=100`, {
+                // Filter server-side so categories aren't capped to the most recent 100 rows
+                let url = `${API_BASE}/api/admin/conversations?limit=100`;
+                if (currentFilter !== 'all') url += `&outcome=${encodeURIComponent(currentFilter)}`;
+                const res = await fetch(url, {
                     headers: { 'X-Admin-Api-Key': apiKey }
                 });
                 const data = await res.json();
@@ -903,11 +1132,7 @@
 
         function renderConversations() {
             const list = document.getElementById('conversationsList');
-            let filtered = conversations;
-
-            if (currentFilter !== 'all') {
-                filtered = conversations.filter(c => c.outcome === currentFilter);
-            }
+            const filtered = conversations;
 
             if (filtered.length === 0) {
                 list.innerHTML = '<div class="loading">No conversations found</div>';
@@ -937,6 +1162,7 @@
                         </div>
                         <div class="preview">${c.lead_business_type ? escapeHtml(c.lead_business_type) : 'No business info'}</div>
                         <div class="meta">
+                            ${c.booking_confirmed ? '<span class="badge badge-booked">✓ Booked</span>' : ''}
                             <span class="badge ${badgeClass}">${badgeText}</span>
                             <span class="badge badge-messages">${c.message_count} msgs</span>
                         </div>
@@ -964,10 +1190,15 @@
                 document.getElementById('detailName').textContent = name;
 
                 let contactHtml = [];
-                if (data.lead_email) contactHtml.push(`<a href="mailto:${data.lead_email}">${data.lead_email}</a>`);
-                if (data.lead_phone) contactHtml.push(`<a href="tel:${data.lead_phone}">${data.lead_phone}</a>`);
-                if (data.lead_business_type) contactHtml.push(data.lead_business_type);
+                if (data.lead_email) contactHtml.push(`<a href="mailto:${encodeURIComponent(data.lead_email)}">${escapeHtml(data.lead_email)}</a>`);
+                if (data.lead_phone) contactHtml.push(`<a href="tel:${encodeURIComponent(data.lead_phone)}">${escapeHtml(data.lead_phone)}</a>`);
+                if (data.lead_business_type) contactHtml.push(escapeHtml(data.lead_business_type));
                 document.getElementById('detailContact').innerHTML = contactHtml.join(' &bull; ');
+
+                // Booked indicator (Calendly-confirmed)
+                document.getElementById('detailBooked').innerHTML = data.booking_confirmed
+                    ? '<span class="detail-booked-badge">✓ Call Booked</span>'
+                    : '';
 
                 // Render messages
                 const container = document.getElementById('messagesContainer');
@@ -1044,9 +1275,76 @@
 
             document.getElementById('conversationsView').classList.toggle('hidden', view !== 'conversations');
             document.getElementById('analyticsView').classList.toggle('hidden', view !== 'analytics');
+            document.getElementById('experimentsView').classList.toggle('hidden', view !== 'experiments');
 
             if (view === 'analytics') {
                 loadAnalytics();
+            } else if (view === 'experiments') {
+                loadExperiments();
+            }
+        }
+
+        async function loadExperiments() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/ab-test`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+                const variants = data.variants || {};
+                const keys = Object.keys(variants).sort();
+
+                // Recommendation banner
+                const recBox = document.getElementById('abRecommendation');
+                recBox.classList.toggle('ready', !!data.hasEnoughData);
+                document.getElementById('abRecommendationText').textContent =
+                    data.recommendation || 'No variant data yet.';
+
+                const wrap = document.getElementById('abTableWrap');
+                if (keys.length === 0) {
+                    wrap.innerHTML = '<div class="loading">No variant data yet. Variants are assigned as new conversations come in.</div>';
+                    return;
+                }
+
+                // Highlight the leading variant by conversion rate, but only once data is significant
+                let bestKey = null, bestRate = -1;
+                keys.forEach(k => {
+                    const r = parseFloat(variants[k].conversion_rate) || 0;
+                    if (r > bestRate) { bestRate = r; bestKey = k; }
+                });
+
+                const rows = keys.map(k => {
+                    const v = variants[k];
+                    const win = (k === bestKey && data.hasEnoughData) ? ' class="winner"' : '';
+                    return `
+                        <tr${win}>
+                            <td class="variant-name">Variant ${escapeHtml(k)}</td>
+                            <td class="metric">${v.total}</td>
+                            <td class="metric">${escapeHtml(String(v.conversion_rate))}</td>
+                            <td class="metric">${escapeHtml(String(v.contact_rate))}</td>
+                            <td class="metric">${escapeHtml(String(v.abandon_rate))}</td>
+                            <td class="metric">${v.avg_messages}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                wrap.innerHTML = `
+                    <table class="variant-table">
+                        <thead>
+                            <tr>
+                                <th>Variant</th>
+                                <th>Conversations</th>
+                                <th>Conversion</th>
+                                <th>Contact</th>
+                                <th>Abandon</th>
+                                <th>Avg Msgs</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
+            } catch (e) {
+                console.error('Failed to load experiments:', e);
+                document.getElementById('abTableWrap').innerHTML = '<div class="loading">Failed to load</div>';
             }
         }
 
