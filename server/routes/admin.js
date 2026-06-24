@@ -446,12 +446,13 @@ router.get('/analytics', (req, res) => {
             WHERE message_count > 0
         `).get();
 
-        // Conversations over last 30 days
+        // Conversations over last 30 days (with confirmed bookings per day)
         const dailyStats = dbInstance.prepare(`
             SELECT
                 DATE(created_at) as date,
                 COUNT(*) as total,
-                SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted
+                SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted,
+                SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as booked
             FROM conversations
             WHERE created_at >= DATE('now', '-30 days')
             GROUP BY DATE(created_at)
@@ -488,6 +489,61 @@ router.get('/analytics', (req, res) => {
             LIMIT 10
         `).all();
 
+        // Conversion funnel: each stage is a subset of the previous one
+        const funnel = dbInstance.prepare(`
+            SELECT
+                COUNT(*) as started,
+                SUM(CASE WHEN message_count >= 3 THEN 1 ELSE 0 END) as engaged,
+                SUM(CASE WHEN lead_email IS NOT NULL OR lead_phone IS NOT NULL THEN 1 ELSE 0 END) as contact,
+                SUM(CASE WHEN booking_trigger_reason IS NOT NULL THEN 1 ELSE 0 END) as book_intent,
+                SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as confirmed
+            FROM conversations
+        `).get();
+
+        // Booking reconciliation: webhook truth vs manually-marked outcome
+        const bookingBreakdown = dbInstance.prepare(`
+            SELECT
+                SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as marked_converted,
+                SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as webhook_confirmed,
+                SUM(CASE WHEN booking_trigger_reason IS NOT NULL THEN 1 ELSE 0 END) as book_intent
+            FROM conversations
+        `).get();
+
+        // Why the agent booked, cross-tabbed with actual confirmation
+        const triggerReasons = dbInstance.prepare(`
+            SELECT
+                booking_trigger_reason as reason,
+                COUNT(*) as offered,
+                SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as confirmed
+            FROM conversations
+            WHERE booking_trigger_reason IS NOT NULL
+            GROUP BY booking_trigger_reason
+            ORDER BY offered DESC
+        `).all();
+
+        // Which niches convert (booked = webhook-confirmed or manually marked)
+        const niches = dbInstance.prepare(`
+            SELECT
+                lead_business_type as niche,
+                COUNT(*) as total,
+                SUM(CASE WHEN booking_confirmed = 1 OR outcome = 'converted' THEN 1 ELSE 0 END) as booked
+            FROM conversations
+            WHERE lead_business_type IS NOT NULL AND lead_business_type != ''
+            GROUP BY lead_business_type
+            ORDER BY total DESC
+            LIMIT 8
+        `).all();
+
+        // Intent mix (spam filter / lead quality)
+        const intents = dbInstance.prepare(`
+            SELECT
+                COALESCE(intent, 'unclassified') as intent,
+                COUNT(*) as count
+            FROM conversations
+            GROUP BY COALESCE(intent, 'unclassified')
+            ORDER BY count DESC
+        `).all();
+
         res.json({
             conversion: {
                 total: conversionStats.total || 0,
@@ -507,7 +563,12 @@ router.get('/analytics', (req, res) => {
             daily: dailyStats,
             leadsWithContact: leadsWithContact.count || 0,
             hourly: hourlyStats,
-            topSources: topSources
+            topSources: topSources,
+            funnel: funnel,
+            bookingBreakdown: bookingBreakdown,
+            triggerReasons: triggerReasons,
+            niches: niches,
+            intents: intents
         });
     } catch (error) {
         console.error('Error getting analytics:', error.message);

@@ -523,9 +523,10 @@
         }
 
         .bar-label {
-            width: 60px;
+            width: 84px;
             font-size: 12px;
             color: #8b8b94;
+            flex-shrink: 0;
         }
 
         .bar-container {
@@ -738,6 +739,102 @@
             letter-spacing: 0.04em;
             margin-bottom: 6px;
         }
+
+        /* Analytics: daily trend */
+        .card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .card-head h3 { margin-bottom: 0; }
+        .delta { font-size: 13px; font-variant-numeric: tabular-nums; color: #8b8b94; }
+        .delta.up { color: #22c55e; }
+        .delta.down { color: #ef4444; }
+
+        .trend-svg { width: 100%; height: 200px; display: block; }
+        .trend-legend {
+            display: flex;
+            gap: 18px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #8b8b94;
+        }
+        .trend-legend .dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .trend-legend .dot.total { background: #3b82f6; }
+        .trend-legend .dot.booked { background: #22c55e; }
+
+        /* Analytics: funnel */
+        .funnel { display: flex; flex-direction: column; gap: 10px; }
+        .funnel-row { display: flex; align-items: center; gap: 12px; }
+        .funnel-label { width: 150px; font-size: 13px; color: #a1a1aa; flex-shrink: 0; }
+        .funnel-bar-wrap {
+            flex: 1;
+            background: #27272a;
+            border-radius: 6px;
+            height: 30px;
+            overflow: hidden;
+        }
+        .funnel-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #2563eb);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            padding-left: 10px;
+            font-size: 12px;
+            color: #fff;
+            font-weight: 600;
+            min-width: 2px;
+            transition: width 0.3s;
+        }
+        .funnel-bar.final { background: linear-gradient(90deg, #16a34a, #22c55e); }
+        .funnel-pct {
+            width: 56px;
+            text-align: right;
+            font-size: 12px;
+            color: #8b8b94;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Analytics: booking reconciliation */
+        .reconcile { display: flex; gap: 10px; margin-bottom: 12px; }
+        .reconcile .rc {
+            flex: 1;
+            background: #27272a;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .reconcile .rc .rc-val {
+            font-size: 24px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .reconcile .rc.confirmed .rc-val { color: #22c55e; }
+        .reconcile .rc.claimed .rc-val { color: #f59e0b; }
+        .reconcile .rc .rc-label { font-size: 11px; color: #8b8b94; margin-top: 4px; }
+        .reconcile-note { font-size: 12px; color: #8b8b94; margin-bottom: 14px; line-height: 1.45; }
+
+        .trigger-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #27272a;
+            font-size: 13px;
+        }
+        .trigger-row:last-child { border-bottom: none; }
+        .trigger-row .tr-reason { color: #a1a1aa; }
+        .trigger-row .tr-stat { color: #8b8b94; }
+        .trigger-row .tr-stat strong { color: #e4e4e7; font-variant-numeric: tabular-nums; }
     </style>
 </head>
 <body>
@@ -890,7 +987,21 @@
 
         <!-- Analytics View -->
         <div id="analyticsView" class="hidden">
-            <div class="analytics-grid">
+            <!-- Daily trend (full width) -->
+            <div class="analytics-card" style="margin-bottom:20px;">
+                <div class="card-head">
+                    <h3>Conversations &amp; Bookings, Last 30 Days</h3>
+                    <span class="delta" id="trendDelta"></span>
+                </div>
+                <div id="trendChart"><div class="loading">No data yet</div></div>
+                <div class="trend-legend">
+                    <span><i class="dot total"></i> Conversations</span>
+                    <span><i class="dot booked"></i> Booked</span>
+                </div>
+            </div>
+
+            <!-- Compact KPI trio -->
+            <div class="analytics-grid" style="margin-bottom:20px;">
                 <div class="analytics-card">
                     <h3>Conversion Rate</h3>
                     <div class="big-stat green" id="conversionRate">0%</div>
@@ -908,15 +1019,37 @@
                     <div class="big-stat" id="leadsWithContact">0</div>
                     <div class="big-stat-label">visitors shared email or phone</div>
                 </div>
+            </div>
+
+            <!-- Conversion funnel (full width) -->
+            <div class="analytics-card" style="margin-bottom:20px;">
+                <h3>Conversion Funnel</h3>
+                <div class="funnel" id="funnelChart"><div class="loading">No data yet</div></div>
+            </div>
+
+            <!-- Booking detail + segmentation -->
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>Bookings: Confirmed vs Claimed</h3>
+                    <div id="bookingBreakdown"></div>
+                    <div class="trigger-list" id="triggerReasons"></div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Top Niches</h3>
+                    <div class="source-list" id="nichesList">
+                        <div class="loading">No data yet</div>
+                    </div>
+                </div>
+
+                <div class="analytics-card">
+                    <h3>Intent Mix</h3>
+                    <div class="bar-chart" id="intentChart"></div>
+                </div>
 
                 <div class="analytics-card">
                     <h3>Outcomes Breakdown</h3>
                     <div class="bar-chart" id="outcomesChart"></div>
-                </div>
-
-                <div class="analytics-card">
-                    <h3>Busiest Hours</h3>
-                    <div class="bar-chart" id="hourlyChart"></div>
                 </div>
 
                 <div class="analytics-card">
@@ -1355,14 +1488,16 @@
                 });
                 const data = await res.json();
 
-                // Conversion rate
+                // Compact KPIs
                 document.getElementById('conversionRate').textContent = data.conversion.rate + '%';
-
-                // Avg messages
                 document.getElementById('avgMessages').textContent = data.messages.avgBeforeConversion || '-';
-
-                // Leads with contact
                 document.getElementById('leadsWithContact').textContent = data.leadsWithContact;
+
+                renderTrend(data.daily || []);
+                renderFunnel(data.funnel || {});
+                renderBookingBreakdown(data.bookingBreakdown || {}, data.triggerReasons || []);
+                renderNiches(data.niches || []);
+                renderIntents(data.intents || []);
 
                 // Outcomes breakdown
                 const outcomes = [
@@ -1381,20 +1516,6 @@
                         <span class="bar-value">${o.value}</span>
                     </div>
                 `).join('');
-
-                // Hourly chart (top 6 hours)
-                const hourly = data.hourly || [];
-                const topHours = [...hourly].sort((a, b) => b.count - a.count).slice(0, 6).sort((a, b) => a.hour - b.hour);
-                const maxHour = Math.max(...topHours.map(h => h.count), 1);
-                document.getElementById('hourlyChart').innerHTML = topHours.length > 0 ? topHours.map(h => `
-                    <div class="bar-row">
-                        <span class="bar-label">${h.hour}:00</span>
-                        <div class="bar-container">
-                            <div class="bar-fill" style="width: ${(h.count / maxHour) * 100}%"></div>
-                        </div>
-                        <span class="bar-value">${h.count}</span>
-                    </div>
-                `).join('') : '<div class="loading">No data yet</div>';
 
                 // Top sources
                 const sources = data.topSources || [];
@@ -1415,6 +1536,188 @@
             } catch (e) {
                 console.error('Failed to load analytics:', e);
             }
+        }
+
+        function renderTrend(daily) {
+            const el = document.getElementById('trendChart');
+            const deltaEl = document.getElementById('trendDelta');
+            if (!daily.length) {
+                el.innerHTML = '<div class="loading">No data yet</div>';
+                deltaEl.textContent = '';
+                return;
+            }
+
+            const W = 800, H = 200, pad = 28;
+            const n = daily.length;
+            const maxVal = Math.max(...daily.map(d => d.total), 1);
+            const xFor = (i) => n === 1 ? W / 2 : pad + i * (W - 2 * pad) / (n - 1);
+            const yFor = (v) => H - pad - (v / maxVal) * (H - 2 * pad);
+            const pts = (key) => daily.map((d, i) => `${xFor(i).toFixed(1)},${yFor(d[key] || 0).toFixed(1)}`).join(' ');
+
+            const areaPath = `M ${xFor(0).toFixed(1)},${(H - pad).toFixed(1)} L `
+                + daily.map((d, i) => `${xFor(i).toFixed(1)},${yFor(d.total || 0).toFixed(1)}`).join(' L ')
+                + ` L ${xFor(n - 1).toFixed(1)},${(H - pad).toFixed(1)} Z`;
+
+            el.innerHTML = `
+                <svg class="trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+                    <defs>
+                        <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.25"/>
+                            <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+                        </linearGradient>
+                    </defs>
+                    <path d="${areaPath}" fill="url(#trendFill)"/>
+                    <polyline points="${pts('total')}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round"/>
+                    <polyline points="${pts('booked')}" fill="none" stroke="#22c55e" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+            `;
+
+            // Week-over-week delta on conversation volume
+            const today = new Date();
+            const dayMs = 86400000;
+            const sumWindow = (startDaysAgo, endDaysAgo) => {
+                const start = new Date(today - startDaysAgo * dayMs);
+                const end = new Date(today - endDaysAgo * dayMs);
+                return daily.reduce((acc, d) => {
+                    const dt = new Date(d.date);
+                    return (dt >= start && dt < end) ? acc + d.total : acc;
+                }, 0);
+            };
+            const last7 = sumWindow(7, 0);
+            const prev7 = sumWindow(14, 7);
+            if (prev7 > 0) {
+                const pct = Math.round(((last7 - prev7) / prev7) * 100);
+                deltaEl.textContent = `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs prior 7 days`;
+                deltaEl.className = 'delta ' + (pct >= 0 ? 'up' : 'down');
+            } else {
+                deltaEl.textContent = `${last7} in last 7 days`;
+                deltaEl.className = 'delta';
+            }
+        }
+
+        function renderFunnel(f) {
+            const el = document.getElementById('funnelChart');
+            const started = f.started || 0;
+            if (!started) {
+                el.innerHTML = '<div class="loading">No data yet</div>';
+                return;
+            }
+            const stages = [
+                { label: 'Conversations', value: f.started || 0 },
+                { label: 'Engaged (3+ msgs)', value: f.engaged || 0 },
+                { label: 'Contact captured', value: f.contact || 0 },
+                { label: 'Booking offered', value: f.book_intent || 0 },
+                { label: 'Call confirmed', value: f.confirmed || 0, final: true }
+            ];
+            el.innerHTML = stages.map(s => {
+                const pct = started > 0 ? (s.value / started) * 100 : 0;
+                return `
+                    <div class="funnel-row">
+                        <span class="funnel-label">${s.label}</span>
+                        <div class="funnel-bar-wrap">
+                            <div class="funnel-bar ${s.final ? 'final' : ''}" style="width:${Math.max(pct, 1)}%">${s.value}</div>
+                        </div>
+                        <span class="funnel-pct">${pct.toFixed(0)}%</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderBookingBreakdown(b, triggers) {
+            const confirmed = b.webhook_confirmed || 0;
+            const claimed = b.marked_converted || 0;
+            const intent = b.book_intent || 0;
+
+            let note;
+            if (claimed > confirmed) {
+                note = `${claimed} marked as booked, but only ${confirmed} confirmed via the Calendly webhook. The gap of ${claimed - confirmed} is manual marks or a webhook that is not firing.`;
+            } else if (confirmed > 0) {
+                note = `${confirmed} bookings confirmed by the Calendly webhook.`;
+            } else if (intent > 0) {
+                note = `The agent offered a call ${intent} times but none are webhook-confirmed yet. Check that the Calendly webhook is wired.`;
+            } else {
+                note = 'No bookings yet.';
+            }
+
+            document.getElementById('bookingBreakdown').innerHTML = `
+                <div class="reconcile">
+                    <div class="rc confirmed"><div class="rc-val">${confirmed}</div><div class="rc-label">Confirmed (webhook)</div></div>
+                    <div class="rc claimed"><div class="rc-val">${claimed}</div><div class="rc-label">Marked converted</div></div>
+                    <div class="rc"><div class="rc-val">${intent}</div><div class="rc-label">Booking offered</div></div>
+                </div>
+                <div class="reconcile-note">${note}</div>
+            `;
+
+            const tEl = document.getElementById('triggerReasons');
+            tEl.innerHTML = triggers.length ? triggers.map(t => {
+                const rate = t.offered > 0 ? Math.round((t.confirmed / t.offered) * 100) : 0;
+                return `
+                    <div class="trigger-row">
+                        <span class="tr-reason">${escapeHtml(humanizeReason(t.reason))}</span>
+                        <span class="tr-stat"><strong>${t.offered}</strong> offered &middot; <strong>${t.confirmed}</strong> confirmed (${rate}%)</span>
+                    </div>
+                `;
+            }).join('') : '';
+        }
+
+        function humanizeReason(r) {
+            const map = {
+                explicit_request: 'Explicit request',
+                qualification_complete: 'Qualified',
+                warm_visitor_shortcut: 'Warm-visitor shortcut'
+            };
+            return map[r] || (r ? r.replace(/_/g, ' ') : 'Unknown');
+        }
+
+        function renderNiches(niches) {
+            const el = document.getElementById('nichesList');
+            if (!niches.length) {
+                el.innerHTML = '<div class="loading">No data yet</div>';
+                return;
+            }
+            el.innerHTML = niches.map(nrow => {
+                const rate = nrow.total > 0 ? Math.round((nrow.booked / nrow.total) * 100) : 0;
+                const label = (nrow.niche || 'Unknown').substring(0, 28);
+                return `
+                    <div class="source-item">
+                        <span class="url" title="${escapeHtml(nrow.niche || '')}">${escapeHtml(label)}</span>
+                        <div class="stats">
+                            <span><strong>${nrow.total}</strong> chats</span>
+                            <span><strong>${nrow.booked}</strong> booked (${rate}%)</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderIntents(intents) {
+            const el = document.getElementById('intentChart');
+            if (!intents.length) {
+                el.innerHTML = '<div class="loading">No data yet</div>';
+                return;
+            }
+            const max = Math.max(...intents.map(i => i.count), 1);
+            el.innerHTML = intents.map(i => `
+                <div class="bar-row">
+                    <span class="bar-label" title="${escapeHtml(i.intent)}">${escapeHtml(humanizeIntent(i.intent))}</span>
+                    <div class="bar-container">
+                        <div class="bar-fill" style="width:${(i.count / max) * 100}%"></div>
+                    </div>
+                    <span class="bar-value">${i.count}</span>
+                </div>
+            `).join('');
+        }
+
+        function humanizeIntent(i) {
+            const map = {
+                real_lead: 'Real lead',
+                spam: 'Spam',
+                partnership: 'Partnership',
+                job_seeker: 'Job seeker',
+                unclear: 'Unclear',
+                unclassified: 'Unclassified'
+            };
+            return map[i] || (i ? i.replace(/_/g, ' ') : 'Unknown');
         }
     </script>
 </body>
