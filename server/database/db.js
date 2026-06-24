@@ -243,6 +243,32 @@ async function initialize() {
         console.log('Pattern status migration note:', err.message);
     }
 
+    // Migration: chat_metrics table for token/latency/cost observability (P4)
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_chat_metrics_table'").get();
+        if (!alreadyRun) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS chat_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT,
+                    model TEXT,
+                    input_tokens INTEGER DEFAULT 0,
+                    output_tokens INTEGER DEFAULT 0,
+                    cache_read_tokens INTEGER DEFAULT 0,
+                    cache_creation_tokens INTEGER DEFAULT 0,
+                    latency_ms INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_chat_metrics_created ON chat_metrics(created_at);
+            `);
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_chat_metrics_table')").run();
+            console.log('Added chat_metrics table');
+        }
+    } catch (err) {
+        console.log('Chat metrics migration note:', err.message);
+    }
+
     // Create virtual table for vector search if extension loaded
     if (vecLoaded) {
         try {
@@ -843,6 +869,82 @@ function getRecentGuardrailEvents(limit = 50) {
     `).all(limit);
 }
 
+/**
+ * Guardrail trips aggregated by pattern over a time window. Used by admin analytics.
+ */
+function getGuardrailStats(days = 14) {
+    const db = getDb();
+    return db.prepare(`
+        SELECT
+            pattern_name,
+            COUNT(*) as count
+        FROM guardrail_events
+        WHERE datetime(created_at, '+' || ? || ' days') > datetime('now')
+        GROUP BY pattern_name
+        ORDER BY count DESC
+    `).all(days);
+}
+
+/**
+ * Record token usage and latency for a chat turn. Fire-and-forget.
+ */
+function logChatMetric({ conversationId, model, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheCreationTokens = 0, latencyMs = null }) {
+    try {
+        const db = getDb();
+        db.prepare(`
+            INSERT INTO chat_metrics
+                (conversation_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, latency_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            conversationId || null,
+            model || null,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheCreationTokens,
+            latencyMs
+        );
+    } catch (err) {
+        console.error('logChatMetric error:', err.message);
+    }
+}
+
+/**
+ * Aggregate token usage, cost inputs, latency, and cache-hit ratio over a window.
+ * Returns raw token sums; dollar cost is computed in the route using config pricing.
+ */
+function getChatMetricStats(days = 14) {
+    const db = getDb();
+    const totals = db.prepare(`
+        SELECT
+            COUNT(*) as turns,
+            COUNT(DISTINCT conversation_id) as conversations,
+            COALESCE(SUM(input_tokens), 0) as input_tokens,
+            COALESCE(SUM(output_tokens), 0) as output_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+            AVG(latency_ms) as avg_latency,
+            AVG(output_tokens) as avg_output
+        FROM chat_metrics
+        WHERE datetime(created_at, '+' || ? || ' days') > datetime('now')
+    `).get(days);
+
+    const byModel = db.prepare(`
+        SELECT
+            model,
+            COUNT(*) as turns,
+            COALESCE(SUM(input_tokens), 0) as input_tokens,
+            COALESCE(SUM(output_tokens), 0) as output_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens
+        FROM chat_metrics
+        WHERE datetime(created_at, '+' || ? || ' days') > datetime('now')
+        GROUP BY model
+    `).all(days);
+
+    return { totals, byModel };
+}
+
 // ============================================
 // SESSION STATE PERSISTENCE
 // ============================================
@@ -1172,6 +1274,9 @@ module.exports = {
     getToolEventStats,
     logGuardrailEvent,
     getRecentGuardrailEvents,
+    getGuardrailStats,
+    logChatMetric,
+    getChatMetricStats,
 
     // Follow-ups
     getFollowUpCandidates,

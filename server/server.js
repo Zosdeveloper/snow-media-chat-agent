@@ -419,6 +419,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // Call Claude API with tools. System is split into two blocks so the
         // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
         // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
+        const chatStartTime = Date.now();
         const response = await anthropic.messages.create({
             model: config.models.chat,
             max_tokens: 500,
@@ -430,6 +431,22 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             tools: gatedTools,
             tool_choice: { type: 'auto' }
         });
+
+        // Record token usage + latency for cost observability (fire-and-forget).
+        try {
+            const u = response.usage || {};
+            db.logChatMetric({
+                conversationId: sessionId,
+                model: config.models.chat,
+                inputTokens: u.input_tokens || 0,
+                outputTokens: u.output_tokens || 0,
+                cacheReadTokens: u.cache_read_input_tokens || 0,
+                cacheCreationTokens: u.cache_creation_input_tokens || 0,
+                latencyMs: Date.now() - chatStartTime
+            });
+        } catch (err) {
+            console.error('Error logging chat metric:', err.message);
+        }
 
         // Process response: extract text and tool calls
         let assistantMessage = '';

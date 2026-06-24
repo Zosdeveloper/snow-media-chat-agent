@@ -28,6 +28,14 @@ const config = {
         classifier: process.env.CLASSIFIER_MODEL || 'claude-haiku-4-5',
     },
 
+    // Published per-million-token pricing, used only to estimate dashboard cost.
+    // Update here when Anthropic pricing changes. cacheRead ~= 0.1x input,
+    // cacheWrite (5-min ephemeral) ~= 1.25x input.
+    modelPricing: {
+        'claude-sonnet-4-6': { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 },
+        'claude-haiku-4-5':  { input: 1.00, output: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 },
+    },
+
     // Embedding settings
     embedding: {
         model: 'voyage-3-lite',

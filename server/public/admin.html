@@ -835,6 +835,49 @@
         .trigger-row .tr-reason { color: #a1a1aa; }
         .trigger-row .tr-stat { color: #8b8b94; }
         .trigger-row .tr-stat strong { color: #e4e4e7; font-variant-numeric: tabular-nums; }
+
+        /* Agent: pattern status reconcile colors */
+        .reconcile .rc.active .rc-val { color: #22c55e; }
+        .reconcile .rc.quarantined .rc-val { color: #f59e0b; }
+        .reconcile .rc.archived .rc-val { color: #8b8b94; }
+
+        /* Agent: recent guardrail flags */
+        .flag-row {
+            padding: 10px 0;
+            border-bottom: 1px solid #27272a;
+        }
+        .flag-row:last-child { border-bottom: none; }
+        .flag-row .flag-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .flag-pattern {
+            font-size: 12px;
+            font-weight: 600;
+            color: #f59e0b;
+            background: #451a03;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .flag-row .flag-time { font-size: 11px; color: #8b8b94; }
+        .flag-row .flag-msg {
+            font-size: 13px;
+            color: #a1a1aa;
+            line-height: 1.4;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .empty-positive {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #22c55e;
+            font-size: 14px;
+            padding: 12px 0;
+        }
     </style>
 </head>
 <body>
@@ -891,6 +934,7 @@
             <button class="view-tab active" data-view="conversations" onclick="switchView('conversations')">Conversations</button>
             <button class="view-tab" data-view="analytics" onclick="switchView('analytics')">Analytics</button>
             <button class="view-tab" data-view="experiments" onclick="switchView('experiments')">Experiments</button>
+            <button class="view-tab" data-view="agent" onclick="switchView('agent')">Agent</button>
         </div>
 
         <!-- Conversations View -->
@@ -1074,6 +1118,52 @@
                 </div>
             </div>
         </div><!-- End Experiments View -->
+
+        <!-- Agent Performance View -->
+        <div id="agentView" class="hidden">
+            <!-- Cost & latency strip -->
+            <div class="mini-stats" style="margin-bottom:20px;">
+                <div class="mini-stat">
+                    <div class="mini-label">Est. Cost / Conversation</div>
+                    <div class="mini-value" id="agCostPer">-</div>
+                    <div class="mini-sub" id="agCostTotal"></div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-label">Avg Response Latency</div>
+                    <div class="mini-value" id="agLatency">-</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-label">Cache Hit Rate</div>
+                    <div class="mini-value" id="agCacheHit">-</div>
+                    <div class="mini-sub">prompt-cache reads</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-label">Avg Output Tokens</div>
+                    <div class="mini-value" id="agAvgOutput">-</div>
+                    <div class="mini-sub" id="agTurns"></div>
+                </div>
+            </div>
+
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>Guardrail Trips (14d)</h3>
+                    <div id="agGuardrail"><div class="loading">Loading...</div></div>
+                </div>
+                <div class="analytics-card">
+                    <h3>Learning Loop (RAG Patterns)</h3>
+                    <div id="agPatterns"><div class="loading">Loading...</div></div>
+                </div>
+                <div class="analytics-card">
+                    <h3>Tool Behavior (14d)</h3>
+                    <div class="bar-chart" id="agTools"><div class="loading">Loading...</div></div>
+                </div>
+            </div>
+
+            <div class="analytics-card" style="margin-top:20px;">
+                <h3>Recent Guardrail Flags</h3>
+                <div id="agGuardrailRecent"><div class="loading">No flags</div></div>
+            </div>
+        </div><!-- End Agent Performance View -->
 
     </div>
 
@@ -1409,12 +1499,156 @@
             document.getElementById('conversationsView').classList.toggle('hidden', view !== 'conversations');
             document.getElementById('analyticsView').classList.toggle('hidden', view !== 'analytics');
             document.getElementById('experimentsView').classList.toggle('hidden', view !== 'experiments');
+            document.getElementById('agentView').classList.toggle('hidden', view !== 'agent');
 
             if (view === 'analytics') {
                 loadAnalytics();
             } else if (view === 'experiments') {
                 loadExperiments();
+            } else if (view === 'agent') {
+                loadAgent();
             }
+        }
+
+        async function loadAgent() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/agent`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+
+                renderAgentCost(data.cost || {});
+                renderGuardrail(data.guardrail || {});
+                renderLearningLoop(data.patterns || {});
+                renderToolBehavior(data.tools || []);
+                renderGuardrailRecent((data.guardrail && data.guardrail.recent) || []);
+            } catch (e) {
+                console.error('Failed to load agent data:', e);
+            }
+        }
+
+        function renderAgentCost(c) {
+            document.getElementById('agCostPer').textContent = c.costPerConversation != null ? '$' + c.costPerConversation : '$0';
+            document.getElementById('agCostTotal').textContent = c.totalCost ? `$${c.totalCost} total (14d)` : 'no spend yet';
+            document.getElementById('agLatency').textContent = c.avgLatencyMs ? (c.avgLatencyMs / 1000).toFixed(1) + 's' : '-';
+            document.getElementById('agCacheHit').textContent = (c.cacheHitRate || 0) + '%';
+            document.getElementById('agAvgOutput').textContent = c.avgOutputTokens || 0;
+            document.getElementById('agTurns').textContent = c.turns ? `${c.turns} turns` : '';
+        }
+
+        function renderGuardrail(g) {
+            const el = document.getElementById('agGuardrail');
+            if (!g.total) {
+                el.innerHTML = '<div class="empty-positive">✓ No guardrail trips. The agent is staying on-script.</div>';
+                return;
+            }
+            const bars = g.byPattern || [];
+            const max = Math.max(...bars.map(b => b.count), 1);
+            el.innerHTML = `<div style="font-size:28px;font-weight:700;color:#f59e0b;font-variant-numeric:tabular-nums;margin-bottom:12px;">${g.total} <span style="font-size:13px;color:#8b8b94;font-weight:400;">trips in 14d</span></div>`
+                + bars.map(b => `
+                    <div class="bar-row">
+                        <span class="bar-label" title="${escapeHtml(b.pattern_name)}">${escapeHtml(humanizeGuardrail(b.pattern_name))}</span>
+                        <div class="bar-container">
+                            <div class="bar-fill" style="width:${(b.count / max) * 100}%;background:#f59e0b;"></div>
+                        </div>
+                        <span class="bar-value">${b.count}</span>
+                    </div>
+                `).join('');
+        }
+
+        function humanizeGuardrail(n) {
+            if (!n) return 'Unknown';
+            return n.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+        }
+
+        function renderLearningLoop(p) {
+            const el = document.getElementById('agPatterns');
+            const status = p.status || { active: 0, quarantined: 0, archived: 0 };
+            const tagging = p.tagging || { byConfidence: {}, total: 0 };
+            const conf = tagging.byConfidence || {};
+
+            let note = '';
+            const active = status.active || 0;
+            const archived = status.archived || 0;
+            if (archived > active && archived > 0) {
+                note = `<div class="reconcile-note">More patterns archived than active. Quarantined patterns expire unconfirmed, which usually means the Calendly booking webhook is not promoting them.</div>`;
+            } else if (active > 0) {
+                note = `<div class="reconcile-note">${active} active patterns are retrievable by the agent during live chats.</div>`;
+            } else {
+                note = `<div class="reconcile-note">No active learned patterns yet.</div>`;
+            }
+
+            const confMax = Math.max(conf.high || 0, conf.medium || 0, conf.low || 0, 1);
+            const confRow = (label, val, color) => `
+                <div class="bar-row">
+                    <span class="bar-label">${label}</span>
+                    <div class="bar-container"><div class="bar-fill ${color}" style="width:${((val || 0) / confMax) * 100}%"></div></div>
+                    <span class="bar-value">${val || 0}</span>
+                </div>`;
+
+            el.innerHTML = `
+                <div class="reconcile">
+                    <div class="rc active"><div class="rc-val">${status.active || 0}</div><div class="rc-label">Active</div></div>
+                    <div class="rc quarantined"><div class="rc-val">${status.quarantined || 0}</div><div class="rc-label">Quarantined</div></div>
+                    <div class="rc archived"><div class="rc-val">${status.archived || 0}</div><div class="rc-label">Archived</div></div>
+                </div>
+                ${note}
+                <div style="font-size:12px;color:#8b8b94;text-transform:uppercase;letter-spacing:0.04em;margin:6px 0 8px;">Confidence of tagged patterns</div>
+                <div class="bar-chart">
+                    ${confRow('High', conf.high, 'green')}
+                    ${confRow('Medium', conf.medium, '')}
+                    ${confRow('Low', conf.low, '')}
+                </div>`;
+        }
+
+        function renderToolBehavior(tools) {
+            const el = document.getElementById('agTools');
+            if (!tools.length) {
+                el.innerHTML = '<div class="loading">No tool calls yet</div>';
+                return;
+            }
+            // Aggregate by tool_name across trigger reasons
+            const byTool = {};
+            tools.forEach(t => { byTool[t.tool_name] = (byTool[t.tool_name] || 0) + t.count; });
+            const rows = Object.entries(byTool).sort((a, b) => b[1] - a[1]);
+            const max = Math.max(...rows.map(r => r[1]), 1);
+            el.innerHTML = rows.map(([name, count]) => `
+                <div class="bar-row">
+                    <span class="bar-label" title="${escapeHtml(name)}">${escapeHtml(humanizeTool(name))}</span>
+                    <div class="bar-container"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
+                    <span class="bar-value">${count}</span>
+                </div>
+            `).join('');
+        }
+
+        function humanizeTool(n) {
+            const map = {
+                show_booking_calendar: 'Booking calendar',
+                offer_quick_replies: 'Quick replies',
+                capture_lead_field: 'Capture lead',
+                suggest_resource: 'Suggest resource'
+            };
+            return map[n] || (n ? n.replace(/_/g, ' ') : 'Unknown');
+        }
+
+        function renderGuardrailRecent(events) {
+            const el = document.getElementById('agGuardrailRecent');
+            if (!events.length) {
+                el.innerHTML = '<div class="empty-positive">✓ Nothing flagged recently.</div>';
+                return;
+            }
+            el.innerHTML = events.map(ev => {
+                const snippet = ev.matched_text || ev.full_message || '';
+                return `
+                    <div class="flag-row">
+                        <div class="flag-head">
+                            <span class="flag-pattern">${escapeHtml(humanizeGuardrail(ev.pattern_name))}</span>
+                            <span class="flag-time">${formatTime(ev.created_at)}</span>
+                        </div>
+                        <div class="flag-msg">${escapeHtml(snippet)}</div>
+                    </div>
+                `;
+            }).join('');
         }
 
         async function loadExperiments() {

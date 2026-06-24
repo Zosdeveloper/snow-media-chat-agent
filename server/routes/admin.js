@@ -577,6 +577,72 @@ router.get('/analytics', (req, res) => {
 });
 
 /**
+ * GET /api/admin/agent
+ * Agent-quality observability: guardrail trips, tool behavior, learning loop, cost/latency.
+ */
+router.get('/agent', (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 14;
+
+        // Guardrail trips (AI leaking pricing / guarantees / banned phrases)
+        const guardrailByPattern = db.getGuardrailStats(days);
+        const guardrailRecent = db.getRecentGuardrailEvents(15);
+        const guardrailTotal = guardrailByPattern.reduce((s, r) => s + r.count, 0);
+
+        // Tool behavior
+        const toolStats = db.getToolEventStats(days);
+
+        // Learning loop (RAG pattern lifecycle + tagging confidence)
+        const patternStatus = db.getPatternStatusCounts();
+        const tagging = autoTagger.getTaggingStats();
+
+        // Cost & latency from captured token usage
+        const metrics = db.getChatMetricStats(days);
+        const pricing = config.modelPricing || {};
+        const costFor = (m) => {
+            const p = pricing[m.model];
+            if (!p) return 0;
+            return (m.input_tokens / 1e6) * p.input
+                 + (m.output_tokens / 1e6) * p.output
+                 + (m.cache_read_tokens / 1e6) * p.cacheRead
+                 + (m.cache_creation_tokens / 1e6) * p.cacheWrite;
+        };
+        let totalCost = 0;
+        const byModel = (metrics.byModel || []).map(m => {
+            const cost = costFor(m);
+            totalCost += cost;
+            return { model: m.model, turns: m.turns, cost: Math.round(cost * 1000) / 1000 };
+        });
+        const t = metrics.totals || {};
+        const cachedIn = t.cache_read_tokens || 0;
+        const uncachedIn = t.input_tokens || 0;
+        const cacheHitRate = (cachedIn + uncachedIn) > 0
+            ? Math.round((cachedIn / (cachedIn + uncachedIn)) * 100)
+            : 0;
+
+        res.json({
+            days,
+            guardrail: { total: guardrailTotal, byPattern: guardrailByPattern, recent: guardrailRecent },
+            tools: toolStats,
+            patterns: { status: patternStatus, tagging },
+            cost: {
+                turns: t.turns || 0,
+                conversations: t.conversations || 0,
+                totalCost: Math.round(totalCost * 100) / 100,
+                costPerConversation: t.conversations > 0 ? Math.round((totalCost / t.conversations) * 1000) / 1000 : 0,
+                avgLatencyMs: t.avg_latency ? Math.round(t.avg_latency) : 0,
+                avgOutputTokens: t.avg_output ? Math.round(t.avg_output) : 0,
+                cacheHitRate,
+                byModel
+            }
+        });
+    } catch (error) {
+        console.error('Error getting agent observability:', error.message);
+        res.status(500).json({ error: 'Failed to get agent data' });
+    }
+});
+
+/**
  * GET /api/admin/ab-test
  * Get A/B test variant performance comparison
  */
