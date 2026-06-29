@@ -102,6 +102,16 @@ setInterval(() => {
     }
 }, config.session.cleanupInterval); // Run every 15 minutes
 
+// Client-supplied identifiers are treated as bearer capabilities: sessionId
+// resumes a conversation, visitorId pulls a returning visitor's saved contact
+// info. Accept only high-entropy, injection-safe ids. UUIDs and the legacy
+// `prefix_<ts>_<rand>` format both satisfy this; anything with quotes, angle
+// brackets, or whitespace (XSS / probing) is rejected.
+const ID_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
+function isValidId(v) {
+    return typeof v === 'string' && ID_PATTERN.test(v);
+}
+
 // Chat endpoint with rate limiting
 app.post('/api/chat', chatLimiter, async (req, res) => {
     try {
@@ -116,9 +126,14 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             return res.status(400).json({ error: 'Message too long or invalid' });
         }
 
-        if (typeof sessionId !== 'string' || sessionId.length > 100) {
+        if (!isValidId(sessionId)) {
             return res.status(400).json({ error: 'Invalid session ID' });
         }
+
+        // visitorId is optional and drives returning-visitor PII prefill, so a
+        // forgeable value is a data-disclosure vector. Drop anything malformed
+        // rather than 400 (a visitor can still chat without it).
+        const safeVisitorId = isValidId(visitorId) ? visitorId : null;
 
         // Honeypot: bots fill hidden fields, real users never see them.
         // Return a generic response so the bot thinks it worked. Don't save anything.
@@ -159,14 +174,14 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                     leadData: leadData || {},
                     pageContext: pageContext || {},
                     utmParams: utmParams || null,
-                    visitorId: visitorId || null,
+                    visitorId: safeVisitorId,
                     promptVariant,
                     lastActivity: Date.now()
                 };
 
                 // Check for returning visitor
-                if (visitorId) {
-                    previousVisitorData = db.findPreviousVisitorData(visitorId);
+                if (safeVisitorId) {
+                    previousVisitorData = db.findPreviousVisitorData(safeVisitorId);
                     if (previousVisitorData) {
                         isReturningVisitor = true;
                         // Pre-fill lead data from previous visit
@@ -186,7 +201,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         session.leadData = { ...session.leadData, ...leadData };
         if (pageContext) session.pageContext = pageContext;
         if (utmParams) session.utmParams = utmParams;
-        if (visitorId) session.visitorId = visitorId;
+        if (safeVisitorId) session.visitorId = safeVisitorId;
         if (behaviorSignals) session.behaviorSignals = behaviorSignals;
 
         // Persist to database (fire and forget)
@@ -966,7 +981,13 @@ app.get('/api/health/model', async (req, res) => {
 function verifyCalendlySignature(req) {
     const secret = config.calendly.webhookSecret;
     if (!secret) {
-        return { valid: true, reason: 'no_secret_configured' }; // Dev mode: skip verification
+        // Fail closed in production. An unset secret means any caller could forge an
+        // invitee.created event, which promotes RAG patterns, flips outcomes to
+        // converted, and cancels follow-ups. Only skip verification in development.
+        if (config.nodeEnv === 'production') {
+            return { valid: false, reason: 'no_secret_configured' };
+        }
+        return { valid: true, reason: 'no_secret_configured_dev' };
     }
 
     const header = req.get('Calendly-Webhook-Signature') || '';

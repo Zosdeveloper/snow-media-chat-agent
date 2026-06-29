@@ -499,8 +499,12 @@
             this.isMobile = window.innerWidth <= 768;
             this.scrollY = 0;
 
+            // High-entropy id (server treats sessionId as a bearer capability).
+            // randomUUID is the floor; Math.random is a fallback for old browsers.
             this.sessionId = sessionStorage.getItem('snow_chat_session') ||
-                ('sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
+                ('sess_' + ((self.crypto && self.crypto.randomUUID)
+                    ? self.crypto.randomUUID()
+                    : (Date.now().toString(36) + Math.random().toString(36).slice(2, 12))));
             sessionStorage.setItem('snow_chat_session', this.sessionId);
 
             this.leadData = this.loadLeadData();

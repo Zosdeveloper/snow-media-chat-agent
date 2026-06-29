@@ -1378,7 +1378,7 @@
 
                 return `
                     <div class="conversation-item ${c.id === currentConversationId ? 'active' : ''}"
-                         onclick="selectConversation('${c.id}')">
+                         data-id="${escapeHtml(c.id)}">
                         <div class="top-row">
                             <span class="name">${escapeHtml(name)}</span>
                             <span class="time">${time}</span>
@@ -1392,6 +1392,12 @@
                     </div>
                 `;
             }).join('');
+
+            // Delegated click handlers (re-bound each render). Avoids inlining the
+            // conversation id into an onclick JS-string, which was a DOM-XSS sink.
+            list.querySelectorAll('.conversation-item').forEach(el => {
+                el.addEventListener('click', () => selectConversation(el.dataset.id));
+            });
         }
 
         async function selectConversation(id) {

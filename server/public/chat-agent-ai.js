@@ -84,10 +84,20 @@ class SnowMediaAIChatAgent {
         }
     }
 
+    // High-entropy, unguessable ids. The server treats both as bearer
+    // capabilities, so randomUUID (122 bits) is the floor; the Math.random
+    // branch is only a fallback for very old browsers.
+    newId(prefix) {
+        const rand = (self.crypto && self.crypto.randomUUID)
+            ? self.crypto.randomUUID()
+            : (Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+        return prefix + rand;
+    }
+
     getOrCreateSessionId() {
         let sessionId = sessionStorage.getItem('snow_chat_session');
         if (!sessionId) {
-            sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            sessionId = this.newId('session_');
             sessionStorage.setItem('snow_chat_session', sessionId);
         }
         return sessionId;
@@ -108,7 +118,7 @@ class SnowMediaAIChatAgent {
     getOrCreateVisitorId() {
         let visitorId = localStorage.getItem('snow_visitor_id');
         if (!visitorId) {
-            visitorId = 'visitor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            visitorId = this.newId('visitor_');
             localStorage.setItem('snow_visitor_id', visitorId);
         }
         return visitorId;
