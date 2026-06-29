@@ -33,6 +33,11 @@ const guardrails = require('./services/guardrails');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust the Railway proxy (1 hop) so req.ip reflects the real client via
+// X-Forwarded-For. Without this, express-rate-limit keys every visitor on the
+// proxy IP, collapsing the 20/min limit into a single global bucket.
+app.set('trust proxy', 1);
+
 // CORS configuration - use centralized config
 const corsOptions = {
     origin: function (origin, callback) {
@@ -577,9 +582,27 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             assistantMessage = assistantMessage.trim() + ' [BOOK_CALL]';
         }
 
-        // Fallback: also parse legacy tokens in case model still uses them
+        // Fallback: also parse legacy tokens in case model still uses them.
+        // The system prompt teaches the model to emit [BOOK_CALL] rather than call
+        // show_booking_calendar, so this is actually the common path. Instrument it
+        // the same as the tool path (trigger reason + tool event), otherwise booking
+        // attribution and the admin funnel/tool dashboards read empty.
         if (!showBookingCalendar && assistantMessage.includes('[BOOK_CALL]')) {
             showBookingCalendar = true;
+            session.bookingTrigger = 'token_emitted';
+            console.log(`[BOOKING TRIGGERED] session=${sessionId} reason=token_emitted`);
+            try {
+                db.setBookingTriggerReason(sessionId, 'token_emitted');
+                db.logToolEvent({
+                    conversationId: sessionId,
+                    toolName: 'show_booking_calendar',
+                    triggerReason: 'token_emitted',
+                    userMessageIndex: userMsgIndex,
+                    input: null
+                });
+            } catch (err) {
+                console.error('Error recording token booking:', err.message);
+            }
         }
         if (quickReplies.length === 0) {
             const legacyMatch = assistantMessage.match(/\[QUICK_REPLIES:\s*"([^"]+)"(?:,\s*"([^"]+)")?(?:,\s*"([^"]+)")?\]/);
