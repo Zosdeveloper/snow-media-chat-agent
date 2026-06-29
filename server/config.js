@@ -106,6 +106,17 @@ const config = {
         maintenanceIntervalMs: 30 * 60 * 1000, // 30 minutes
     },
 
+    // Data retention (P5): prune high-volume rows on a schedule so the SQLite
+    // volume doesn't grow unbounded. conversations, successful_patterns, and
+    // follow_ups are never pruned (low-volume, high-value). Ships DISABLED; set
+    // RETENTION_ENABLED=true after reviewing the windows.
+    retention: {
+        enabled: process.env.RETENTION_ENABLED === 'true',
+        messageDays: parseInt(process.env.RETENTION_MESSAGE_DAYS, 10) || 180,
+        instrumentationDays: parseInt(process.env.RETENTION_INSTRUMENTATION_DAYS, 10) || 90,
+        intervalMs: 24 * 60 * 60 * 1000, // daily
+    },
+
     // Rate limiting
     rateLimit: {
         windowMs: 60 * 1000,  // 1 minute

@@ -1225,6 +1225,28 @@ function getStats() {
 }
 
 /**
+ * Prune high-volume rows older than the retention windows. Never touches
+ * conversations, successful_patterns, or follow_ups (low-volume, high-value).
+ * Table names are fixed constants, not user input, so the interpolation is safe.
+ * Returns per-table delete counts.
+ */
+function pruneOldData({ messageDays = 180, instrumentationDays = 90 } = {}) {
+    const db = getDb();
+    const pruneTable = (table, days) => {
+        const result = db.prepare(
+            `DELETE FROM ${table} WHERE datetime(created_at, '+' || ? || ' days') < datetime('now')`
+        ).run(days);
+        return result.changes || 0;
+    };
+    return {
+        messages: pruneTable('messages', messageDays),
+        tool_events: pruneTable('tool_events', instrumentationDays),
+        guardrail_events: pruneTable('guardrail_events', instrumentationDays),
+        chat_metrics: pruneTable('chat_metrics', instrumentationDays),
+    };
+}
+
+/**
  * Close the database connection
  */
 function close() {
@@ -1299,5 +1321,6 @@ module.exports = {
 
     // Utility
     getStats,
+    pruneOldData,
     close
 };

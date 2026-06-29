@@ -1017,6 +1017,24 @@ setInterval(() => {
     }
 }, config.patterns.maintenanceIntervalMs);
 
+// Data retention tick (P5): prune high-volume message/instrumentation rows daily.
+// Disabled unless RETENTION_ENABLED=true. conversations and patterns are never pruned.
+if (config.retention.enabled) {
+    console.log(`[RETENTION] enabled: messages>${config.retention.messageDays}d, instrumentation>${config.retention.instrumentationDays}d`);
+    setInterval(() => {
+        try {
+            const counts = db.pruneOldData({
+                messageDays: config.retention.messageDays,
+                instrumentationDays: config.retention.instrumentationDays,
+            });
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+            if (total > 0) console.log('[RETENTION] pruned', counts);
+        } catch (err) {
+            console.error('[RETENTION] error:', err.message);
+        }
+    }, config.retention.intervalMs);
+}
+
 // Admin routes
 app.use('/api/admin', adminRoutes);
 
