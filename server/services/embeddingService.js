@@ -134,29 +134,6 @@ async function generateConversationEmbedding(messages) {
 }
 
 /**
- * Calculate cosine similarity between two embeddings
- * @param {number[]} a - First embedding
- * @param {number[]} b - Second embedding
- * @returns {number} - Similarity score (0-1)
- */
-function cosineSimilarity(a, b) {
-    if (!a || !b || a.length !== b.length) return 0;
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-        dotProduct += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-
-    const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-    return denominator === 0 ? 0 : dotProduct / denominator;
-}
-
-/**
  * Check if embedding service is available
  * @returns {boolean}
  */
@@ -168,6 +145,5 @@ module.exports = {
     generateEmbeddings,
     generateQueryEmbedding,
     generateConversationEmbedding,
-    cosineSimilarity,
     isAvailable
 };

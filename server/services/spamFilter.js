@@ -155,11 +155,6 @@ function keywordFilter(message) {
     return null;
 }
 
-function isAllowedIntent(intent) {
-    if (!intent) return true; // unknown = default to allow
-    return ALLOWED_INTENTS.has(intent);
-}
-
 function isBlockedIntent(intent) {
     if (!intent) return false;
     return BLOCKED_INTENTS.has(intent);
@@ -168,7 +163,6 @@ function isBlockedIntent(intent) {
 module.exports = {
     checkHoneypot,
     keywordFilter,
-    isAllowedIntent,
     isBlockedIntent,
     ALLOWED_INTENTS,
     BLOCKED_INTENTS,

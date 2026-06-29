@@ -65,7 +65,7 @@ async function classify(text, apiKey) {
     if (!text || !apiKey) return null;
 
     try {
-        const client = new Anthropic({ apiKey });
+        const client = new Anthropic({ apiKey, timeout: 15000, maxRetries: 2 });
 
         const response = await client.messages.create({
             model: config.models.classifier,

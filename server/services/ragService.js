@@ -211,20 +211,6 @@ async function reindexAllPatterns() {
 }
 
 /**
- * Get patterns by type
- * @param {string} patternType - Type of pattern
- * @param {number} limit - Max patterns to return
- * @returns {Array} - Patterns of the specified type
- */
-function getPatternsByType(patternType, limit = 5) {
-    return db.listPatterns({
-        pattern_type: patternType,
-        limit,
-        minConfidence: 0.5
-    });
-}
-
-/**
  * Search patterns by text query
  * @param {string} query - Search query
  * @param {number} limit - Max results
@@ -248,6 +234,5 @@ module.exports = {
     getRelevantContext,
     indexPattern,
     reindexAllPatterns,
-    getPatternsByType,
     searchPatterns
 };

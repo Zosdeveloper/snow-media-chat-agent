@@ -410,15 +410,6 @@ function markAbandoned(sessionId) {
 }
 
 /**
- * Mark a conversation as converted
- */
-function markConverted(sessionId) {
-    const db = getDb();
-    db.prepare('UPDATE conversations SET outcome = ? WHERE id = ?')
-        .run('converted', sessionId);
-}
-
-/**
  * Record that the model called show_booking_calendar this turn.
  * Stores the reason the model gave so we can attribute booking triggers later.
  * This records INTENT to book, not actual booking (that comes via Calendly webhook).
@@ -588,15 +579,6 @@ function getConversationWithMessages(sessionId) {
 
     const messages = getMessages(sessionId);
     return { ...conversation, messages };
-}
-
-/**
- * Update message embedding
- */
-function updateMessageEmbedding(messageId, embedding) {
-    const db = getDb();
-    const embeddingBlob = Buffer.from(new Float32Array(embedding).buffer);
-    db.prepare('UPDATE messages SET embedding = ? WHERE id = ?').run(embeddingBlob, messageId);
 }
 
 // ============================================
@@ -1267,7 +1249,6 @@ module.exports = {
     getConversation,
     listConversations,
     markAbandoned,
-    markConverted,
     setConversationIntent,
     getConversationIntent,
     setBookingTriggerReason,
@@ -1277,7 +1258,6 @@ module.exports = {
     addMessage,
     getMessages,
     getConversationWithMessages,
-    updateMessageEmbedding,
 
     // Patterns
     createPattern,

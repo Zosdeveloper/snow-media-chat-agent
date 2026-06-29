@@ -18,7 +18,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('./../config');
 
-const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
+const anthropic = new Anthropic({ apiKey: config.anthropicApiKey, timeout: 15000, maxRetries: 2 });
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let cache = { at: 0, result: null };

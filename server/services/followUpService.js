@@ -186,7 +186,7 @@ async function sendEmail(followUp) {
  * Use Claude to generate personalized email content for the 3-email sequence
  */
 async function generateEmailContent(conversation, messages) {
-    const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
+    const anthropic = new Anthropic({ apiKey: config.anthropicApiKey, timeout: 20000, maxRetries: 2 });
 
     // Build conversation transcript for context
     const transcript = messages
@@ -282,7 +282,7 @@ function getTemplateEmails(conversation, calendlyUrl) {
         },
         {
             subject: 're: your marketing setup',
-            body: `${greeting}<p>Quick follow-up. We've been getting strong results for businesses like yours, and I think there's a real opportunity to improve your numbers.</p><p>Happy to walk you through what we're seeing in a quick call. No commitment, just useful info either way.</p><p><a href="${calendlyUrl}">Here's my calendar</a> if you want to lock in a time.</p>${footer}`,
+            body: `${greeting}<p>Quick follow-up. We've been getting strong results for businesses like yours, and I think there's a real opportunity to improve your numbers.</p><p>Worth a quick call to walk you through what we're seeing? No commitment, just useful info either way.</p><p><a href="${calendlyUrl}">Here's my calendar</a> if you want to lock in a time.</p>${footer}`,
         },
         {
             subject: 'last one from me',

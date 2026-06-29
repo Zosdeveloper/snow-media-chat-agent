@@ -407,41 +407,14 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                     },
                     required: ['field', 'value']
                 }
-            },
-            {
-                name: 'suggest_resource',
-                description: 'Offer a specific free resource in exchange for their email. Call this only when you are actively asking for their email and pairing it with a resource. resource_name is an enum, pick the one that matches their niche or situation.',
-                input_schema: {
-                    type: 'object',
-                    properties: {
-                        resource_name: {
-                            type: 'string',
-                            enum: [
-                                'Home Services Ad Benchmark Report',
-                                'E-Commerce Ad Benchmark Report',
-                                'Ad Budget Calculator',
-                                'AI Automation ROI Calculator',
-                                'Agency Performance Scorecard',
-                                'Google Ads Audit Checklist'
-                            ]
-                        },
-                        resource_type: {
-                            type: 'string',
-                            enum: ['benchmark_report', 'calculator', 'playbook', 'checklist', 'comparison_guide']
-                        }
-                    },
-                    required: ['resource_name', 'resource_type']
-                }
             }
         ];
 
         // Gate tools based on stored intent. Blocked intents never get the booking
-        // or resource tools so spam and job seekers can't waste Milos's calendar.
+        // tool so spam and job seekers can't waste Milos's calendar.
         let gatedTools = tools;
         if (spamFilter.isBlockedIntent(session.intent)) {
-            gatedTools = tools.filter(t =>
-                t.name !== 'show_booking_calendar' && t.name !== 'suggest_resource'
-            );
+            gatedTools = tools.filter(t => t.name !== 'show_booking_calendar');
         }
 
         // Call Claude API with tools. System is split into two blocks so the
@@ -497,12 +470,13 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         let assistantMessage = '';
         let quickReplies = [];
         let showBookingCalendar = false;
-        let suggestedResource = null;
 
         const userMsgIndex = session.messages.filter(m => m.role === 'user').length;
         for (const block of response.content) {
             if (block.type === 'text') {
-                assistantMessage = block.text;
+                // Append rather than overwrite: a response may carry more than one
+                // text block (e.g. text interleaved with tool_use).
+                assistantMessage += (assistantMessage ? '\n' : '') + block.text;
             } else if (block.type === 'tool_use') {
                 // Log every tool call for attribution analytics (P3-1)
                 db.logToolEvent({
@@ -566,9 +540,6 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
                                 }
                             }
                         }
-                        break;
-                    case 'suggest_resource':
-                        suggestedResource = block.input;
                         break;
                 }
             }
@@ -707,9 +678,11 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             const overflow = session.messages.slice(0, session.messages.length - config.session.maxMessages);
             session.messages = session.messages.slice(-config.session.maxMessages);
 
-            // Summarize overflow in background (don't block response)
-            if (overflow.length > 0 && !session.conversationSummary) {
-                summarizeMessages(overflow, anthropic).then(summary => {
+            // Summarize overflow in background (don't block response). Runs on
+            // every trim, merging the prior summary so messages dropped after the
+            // first trim aren't lost from context.
+            if (overflow.length > 0) {
+                summarizeMessages(overflow, anthropic, session.conversationSummary || null).then(summary => {
                     if (summary) session.conversationSummary = summary;
                 }).catch(err => {
                     console.error('Summarization error:', err.message);
@@ -737,10 +710,6 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             leadData: session.leadData,
             sessionId
         };
-
-        if (suggestedResource) {
-            responsePayload.suggestedResource = suggestedResource;
-        }
 
         res.json(responsePayload);
 
@@ -826,17 +795,21 @@ function detectHandoffTriggers(message, session, sessionId) {
 }
 
 // Summarize trimmed conversation messages to preserve context
-async function summarizeMessages(messages, anthropicClient) {
+async function summarizeMessages(messages, anthropicClient, priorSummary = null) {
     try {
         const transcript = messages.map(m =>
             `${m.role === 'user' ? 'Visitor' : 'Milos'}: ${m.content}`
         ).join('\n');
 
+        const userContent = priorSummary
+            ? `Earlier summary:\n${priorSummary}\n\nNewer messages:\n${transcript}`
+            : transcript;
+
         const response = await anthropicClient.messages.create({
             model: config.models.summarizer,
             max_tokens: 150,
-            system: 'Summarize this chat transcript in 2-3 sentences. Note: visitor business type, pain points, contact info shared, and interest level. Be concise.',
-            messages: [{ role: 'user', content: transcript }]
+            system: 'Summarize this chat transcript in 2-3 sentences. Note: visitor business type, pain points, contact info shared, and interest level. If an earlier summary is provided, merge it with the newer messages into one concise summary. Be concise.',
+            messages: [{ role: 'user', content: userContent }]
         });
 
         return response.content[0].text;
