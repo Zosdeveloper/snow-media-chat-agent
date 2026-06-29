@@ -78,9 +78,14 @@ if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.join(__dirname, '..')));
 }
 
-// Initialize Anthropic client
+// Initialize Anthropic client.
+// timeout is in ms (JS SDK default is 10 min). A hung chat call should fail fast
+// to the canned fallback rather than block the request. maxRetries (default 2)
+// retries 429/5xx/connection errors with exponential backoff.
 const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: 20000,
+    maxRetries: 2
 });
 
 // Store conversation sessions (in production, use Redis or database)
@@ -219,6 +224,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             }
         } catch (err) {
             console.error('Error persisting conversation:', err.message);
+            alerts.databaseError(err, { sessionId, op: 'upsertConversation' });
         }
 
         // Prompt injection detection
@@ -235,6 +241,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             db.addMessage(sessionId, 'user', message);
         } catch (err) {
             console.error('Error persisting user message:', err.message);
+            alerts.databaseError(err, { sessionId, op: 'addMessage:user' });
         }
 
         // Keyword pre-filter: only runs on the first user message.
@@ -435,17 +442,34 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
         // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
         const chatStartTime = Date.now();
-        const response = await anthropic.messages.create({
-            model: config.models.chat,
-            max_tokens: 500,
-            system: [
-                { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-                { type: 'text', text: dynamicSystemBlock }
-            ],
-            messages: messagesForClaude,
-            tools: gatedTools,
-            tool_choice: { type: 'auto' }
-        });
+        let response;
+        try {
+            response = await anthropic.messages.create({
+                model: config.models.chat,
+                max_tokens: 500,
+                system: [
+                    { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+                    { type: 'text', text: dynamicSystemBlock }
+                ],
+                messages: messagesForClaude,
+                tools: gatedTools,
+                tool_choice: { type: 'auto' }
+            });
+        } catch (apiErr) {
+            // Model call failed after retries (timeout, 5xx, overload). Don't
+            // dead-end the visitor with a 500: return a graceful canned reply so
+            // they can retry. The user message is already persisted, so the next
+            // turn continues the conversation. The filler is NOT pushed to history,
+            // so the model never sees it.
+            console.error('[ANTHROPIC] chat completion failed:', apiErr.message);
+            alerts.apiError(apiErr, { sessionId, endpoint: '/api/chat', model: config.models.chat });
+            return res.json({
+                message: "Sorry, I lagged for a second there. Mind sending that again?",
+                quickReplies: [],
+                leadData: session.leadData,
+                sessionId,
+            });
+        }
 
         // Record token usage + latency for cost observability (fire-and-forget).
         try {
@@ -633,6 +657,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             db.addMessage(sessionId, 'assistant', assistantMessage, null, quickReplies.length > 0 ? quickReplies : null);
         } catch (err) {
             console.error('Error persisting assistant message:', err.message);
+            alerts.databaseError(err, { sessionId, op: 'addMessage:assistant' });
         }
 
         // Check for auto-tagging after enough messages (background).
@@ -694,6 +719,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             });
         } catch (err) {
             console.error('Error saving session state:', err.message);
+            alerts.databaseError(err, { sessionId, op: 'saveSessionState' });
         }
 
         const responsePayload = {
