@@ -3,9 +3,20 @@ _Synthesized 2026-04-23. Progress log kept in sync with commits on master._
 
 ## Current status
 
-4 of 5 planned batches shipped. Core improvements are live on master. Railway auto-deploys from master so all changes below are in production.
+_Last updated 2026-06-30. The 2026-04-23 batches (below) plus a follow-on performance and correctness pass are all live on master. Railway auto-deploys from master, so everything here is in production._
 
-**Commit sequence:**
+**Production tip: `9717093` (master == dev, in sync).**
+
+**2026-06-30 session shipped (newest first):**
+- `9717093` RAG similarity metric fix. The code reported `1 - L2distance` as similarity, which is not cosine. vec_patterns uses L2 distance and Voyage embeddings are unit-normalized, so a strong topical match (true cosine ~0.6) reported ~0.18, far below the thresholds. The facts lane was effectively dead, so the agent could never cite a retrieved case study (hard rule #4 only allows citing from retrieved context). Now true cosine (`1 - d^2/2`) with thresholds recalibrated on the real scale (facts 0.45, patterns 0.5). Sales battery 6.8 to 7.2, earned bookings 10 to 14 of 17. Biggest single craft lift measured.
+- `4ae236d` Three fixes: vec_patterns insert bug (PK must bind as a BigInt for sqlite-vec; auto-tag and seed indexing were silently failing), runtime change 4 (a Calendly-confirmed booking now makes the agent stop selling), and real resource delivery (9 live Resource Hub URLs wired into the prompt and KB facts).
+- `4bc7da3` Discovery SPIN-implication pass plus a price-ultimatum close that holds the line and books instead of collapsing.
+- `e06acd8` Email-gate on the booking button: capture an email before opening Calendly so a click-then-abandon still leaves a follow-up-able lead. Both widgets, and `/api/leads` now actually persists (was a logging stub).
+- `e470447` Lean system prompt rewrite (494 to ~140 lines, every guardrail preserved) plus a post-close state machine and funnel instrumentation.
+
+**Earlier (2026-04 / -06):** model-retirement prevention (`/api/health/model` + boot preflight), follow-up email system built (3-email SendGrid nurture + 30-min scheduler), seed-stat audit against the live site, two committed eval harnesses in `server/eval/`.
+
+**2026-04-23 commit sequence:**
 - `54dd608` Plan synthesis (this file's origin)
 - `00a46d3` Batch 1: P0 fixes and P1 quick wins
 - `33105c2` Batch 2: P2-5, P2-3, P3-3
@@ -17,7 +28,7 @@ _Synthesized 2026-04-23. Progress log kept in sync with commits on master._
 1. **Pricing.** All pricing is gated to the call. No dollar figures in chat, ever. The old "retainers start around $2,500" line has been removed.
 2. **Fit-check is soft, never a gate.** A visitor who dodges a qualification question must still be able to book. Enforced via the `<workflow>` branch design and the prompt explicitly telling Milos "Dodging a question is not a reason to refuse the call."
 3. **Pattern quarantine is fully automated.** No admin review queue. Voice gate rejects bad-voice conversations outright; voice-clean patterns land in `quarantined`, promote to `active` only when the source conversation's booking is confirmed via Calendly webhook. Stale quarantined patterns archive after 7 days.
-4. **Follow-up email system (not yet built).** Planned to trigger on session abandonment AND booking confirmation; each goes into a different flow. The `abandoned_at` and `booking_confirmed` fields on conversations are in place to support both.
+4. **Follow-up email system (BUILT, live).** 3-email nurture personalized by Claude, queued for conversations that captured an email but did not convert, 30-minute scheduler, skipped on booking confirmation. See `server/services/followUpService.js`. Needs `SENDGRID_API_KEY` in Railway to actually send (gracefully disabled without it). The email-gate (e06acd8) feeds this: a captured email makes the lead a follow-up candidate even if Calendly is abandoned.
 5. **Red-team cadence.** Undecided. Recommendation: automated script after everything else ships.
 
 ---
@@ -66,52 +77,46 @@ _Synthesized 2026-04-23. Progress log kept in sync with commits on master._
 
 ---
 
-## REMAINING
+## Recommended next steps
 
-Priority order for next sessions. Each item is self-contained; pick them off in any order.
+Priority order, reassessed 2026-06-30 after the performance pass. Each item is self-contained.
 
-### R-1: Widget-side Calendly tracking (unblock accurate booking attribution)
-**Why:** The webhook currently matches by email only. If a visitor books with an email they never typed in chat, attribution silently fails (logs warning, no data). Appending `?utm_content=<sessionId>` to the Calendly URL when the widget opens it passes the session ID through the webhook payload, making matching deterministic.
+### N-1: Read the funnel signals (2-week data pull, no code)
+**Why:** The email-gate and funnel instrumentation are now live. Before building anything else, pull ~2 weeks of `signal_events` and compare `email_captured_at_booking` against `booking_offered_no_email` to size the lead leak the gate actually recovered, plus `chat_continued_after_booking` for how often the post-close state fires. This sizes the value of everything below.
+**Where:** `signal_events` table (raw SQL for now, or build N-5 first). **Scope:** 30 min of analysis.
 
-**Where:**
-- `server/public/chat-agent-ai.js` (production widget, relative paths)
-- `server/public/embed-ai.js` (embeddable version)
-- Server-side: update the webhook handler to prefer `payload.tracking.utm_content` over email matching, fall back to email.
+### N-2: Watch the patterns lane (light monitoring, then decide)
+**Why:** vec_patterns insert (4ae236d) and RAG retrieval (9717093) were both broken, so the auto-tagged conversation patterns lane has effectively never worked. It will now start filling and retrieving for the first time. The quarantine/promote gates are automated, but the voice quality of what lands as `active` should be eyeballed after a handful accumulate, since these become the agent's style few-shot.
+**Where:** `admin.html` patterns view + `successful_patterns` where `tagged_by != 'seed'`. **Scope:** monitoring, then a decision.
 
-**Scope:** ~30 minutes. One widget change, one webhook handler update, test with a real booking.
+### N-3: Widget-side Calendly attribution (was R-1)
+**Why:** The webhook still matches bookings by email only. The email-gate makes that match far more reliable (we now usually have the email), but it is not deterministic. Appending `?utm_content=<sessionId>` to the Calendly URL passes the session ID through the webhook payload for exact matching.
+**Where:** `openCalendly()` in both `server/public/chat-agent-ai.js` and `server/public/embed-ai.js`; webhook handler to prefer `payload.tracking.utm_content`, fall back to email. **Scope:** ~30 min.
 
-### R-2: Automated red-team script
-**Why:** 19 adversarial prompts were identified by the guardrails research (role-swap, policy-puppetry, encoding attacks, authority spoofing, case-study fabrication pressure, free-consulting pressure, pricing pressure, etc.). Run them against the live endpoint before each prompt change to catch regressions.
+### N-4: `late_disqualifier` signal
+**Why:** `<after_the_offer>` tells the agent to gracefully walk back a booking when a disqualifier surfaces after the offer, but nothing measures how often that happens. Needs a cheap per-turn DQ check to emit the signal.
+**Where:** chat handler, alongside the existing post-offer signal logging. **Scope:** 1-2 hours.
 
-**Where:**
-- New `server/scripts/redteam.js` that posts 19 labeled test prompts to `/api/chat`, checks responses against expected-behavior heuristics (refusal, redirect, no banned phrases, no pricing, no em dashes), outputs pass/fail.
-- Optional: wire to CI as a deploy gate.
+### N-5: Admin dashboard surfacing (was R-4)
+**Why:** Several data sources are now raw-SQL only: `signal_events`, `tool_events`, `guardrail_events`, booking trigger reasons, pattern status counts. Surfacing them makes N-1 a dashboard glance instead of a query.
+**Where:** `server/routes/admin.js` + `server/public/admin.html`. **Scope:** 1-2 hours.
 
-**Scope:** 2-3 hours of work. The prompt list is in `C:\tmp\chat-agent-research\05-guardrails.md`.
+### N-6: RAG eval set (was R-3, now higher value)
+**Why:** Thresholds were just calibrated (9717093) against ad-hoc queries. A persisted, hand-labeled set locks retrieval quality against future tweaks. The 2026-06-30 calibration method (seed KB, embed real queries, print true-cosine top hits) is reusable as the harness core.
+**Where:** New `server/eval/rag-eval.mjs` + a small labeled set. **Scope:** ~1 hour of code, plus owner labeling.
 
-### R-3: RAG eval set (20 hand-labeled conversations)
-**Why:** Every threshold tweak in `config.rag` is currently blind. A fixed eval set lets us run A/B on retrieval quality when we adjust thresholds, chunk size, or add MMR diversity.
+### N-7: Automated red-team script (was R-2)
+**Why:** The eval harnesses cover one injection scenario; the full 19-prompt adversarial set is not yet a regression gate.
+**Where:** New `server/eval/redteam.mjs`. Prompt list in `C:\tmp\chat-agent-research\05-guardrails.md`. **Scope:** 2-3 hours.
 
-**Where:** New `server/scripts/rag-eval.js` + `server/data/rag-eval-set.json` with 20 labeled {conversation, expected_pattern_ids}.
+### N-8: Automated guardrail replacement (was R-5)
+**Why:** `guardrail_events` is still log-only. After a review window, flip replacement on for confirmed-safe patterns. **Scope:** 1 hour, gated on reviewing the event rows.
 
-**Scope:** Mostly a labeling task on the owner's side. 2 hours to pick and label conversations from `admin.html`, then a runnable script I can build in under an hour.
+### N-9: Ops follow-through (from model-health work)
+**Why:** `/api/health/model` exists but two ops items are open: confirm the Railway deploy webhook and point an external uptime monitor at the endpoint so a mid-run model retirement pages someone.
 
-### R-4: Admin dashboard surfacing (optional polish)
-**Why:** Three new data sources now exist that the admin dashboard doesn't surface: booking trigger reasons, tool events, guardrail events. Currently readable only via raw SQL.
-
-**Where:** `server/routes/admin.js` + `server/public/admin.html`. Add endpoints for `/api/admin/tool-events`, `/api/admin/guardrail-events`, `/api/admin/pattern-status-counts`. Add simple tables to the HTML.
-
-**Scope:** 1-2 hours.
-
-### R-5: Automated guardrail replacement (after review window)
-**Why:** P3-2 is log-only right now. After a week of event review, decide which patterns are safe to auto-replace with a fallback message vs which are false positives to remove. Flip replacement on for the confirmed-safe ones.
-
-**Where:** `server/server.js` around the guardrail scan. Add a `replace` flag per pattern, rewrite the assistant message when triggered.
-
-**Scope:** 1 hour of code, gated on owner review of `guardrail_events` rows.
-
-### R-6: Deprioritized
-- **P3-4 A/B test the fit-check.** Moot since fit-check is soft. Skip unless we later change that call.
+### Deprioritized
+- **P3-4 A/B test the fit-check.** Moot since fit-check is soft.
 - **Admin review queue for quarantined patterns.** Decided against per owner.
 
 ---
@@ -128,16 +133,21 @@ Priority order for next sessions. Each item is self-contained; pick them off in 
 
 ## Known limitations in the current build
 
-1. **Booking attribution falls back to email matching.** Fixed by R-1.
-2. **Auto-patterns require the Calendly webhook to promote.** Until R-1 lands and the webhook is actually configured in Calendly, patterns may stay quarantined indefinitely. This is by design. The 7-day archive will clean them up.
-3. **vec0 JOIN query hits a known sqlite-vec warning** ("A LIMIT or 'k = ?' constraint is required"). The fallback path via `listPatterns` still returns results. Non-blocking.
-4. **The old `getStageGuidance` function still exists in `promptBuilder.js`** but is no longer called. Safe to delete in a future cleanup pass.
+1. **Booking attribution still falls back to email matching.** Mitigated by the email-gate (we now usually have the email captured); made deterministic by N-3.
+2. **Auto-patterns require the Calendly webhook to promote.** Until the webhook is configured in Calendly (owner action item 1), confirmed bookings will not promote quarantined patterns, so the `active` patterns lane stays empty. The 7-day archive cleans up unpromoted ones.
+3. ~~vec0 JOIN warning + vec insert failure~~ **FIXED (4ae236d, 779c250).** The knn runs in a CTE with an explicit `k = ?`, and the PK binds as a BigInt. Both lanes index and retrieve.
+4. **Length creep on the hardest objection turns.** Now that grounding is live, the agent packs retrieved specifics into tough re-deflect-and-close turns and sometimes overflows the 3-sentence / 60-word cap (caught as guardrail flags, never as leaks). Acceptable tradeoff for the credibility lift; revisit if real conversations feel long.
+5. **The old `getStageGuidance` function still exists in `promptBuilder.js`** but is no longer called. Safe to delete in a future cleanup pass.
 
 ---
 
 ## How to resume
 
-Next session should open with:
-1. Has Milos configured the Calendly webhook yet? (Check `booking_confirmed` column in production DB.)
-2. Pick one of R-1 through R-5 based on priority.
-3. Start by reading this file plus recent commits since `ca27251`.
+Everything through `9717093` is committed and live on master. `dev` and `master` are in sync, working tree clean. This file plus the commit messages since `ca27251` are the full record, and the per-project Claude memory (`project_chat_agent_perf.md`) carries the working detail. Safe to clear the session.
+
+Next session should:
+1. Pull the 2-week funnel-signal read (N-1) before building anything, it sizes the rest.
+2. Pick one of N-2 through N-9. They are self-contained.
+3. After any prompt or RAG change, run BOTH eval harnesses from `server/`: `node eval/run-eval.mjs` (contract) and `node eval/sales-eval.mjs` (craft). Confirm zero pricing and DQ leaks before deploying. Trust direction and magnitude, not exact integers (real run-to-run variance).
+4. Deploy is `git push origin dev:master` (Railway auto-deploys from master). Only with owner go-ahead.
+5. Check owner action items below are done: Calendly webhook secret, SendGrid key.
