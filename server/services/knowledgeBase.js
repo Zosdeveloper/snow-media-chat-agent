@@ -60,11 +60,11 @@ async function seedIfEmpty() {
 
         // Services
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Google Ads Management',
-          content: 'Search, Shopping, Performance Max, YouTube, Display Remarketing, Demand Gen. Min $5k/mo ad spend. Most clients see traction in 30-45 days. We do complete account audits, conversion tracking setup, campaign architecture design, weekly optimization, feed management at SKU level, and GA4/GTM setup.' },
+          content: 'Search, Shopping, Performance Max, YouTube, Display Remarketing, Demand Gen. Most clients see traction in 30-45 days. We do complete account audits, conversion tracking setup, campaign architecture design, weekly optimization, feed management at SKU level, and GA4/GTM setup.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Meta Ads Management',
-          content: 'Lead gen, Advantage+ Shopping, video campaigns, app promotions, dynamic retargeting, lookalike audiences. Min $3k/mo ad spend. We test 15-20+ creative variations weekly. Full creative strategy, Conversion API implementation, CRM-based attribution.' },
+          content: 'Lead gen, Advantage+ Shopping, video campaigns, app promotions, dynamic retargeting, lookalike audiences. We test 15-20+ creative variations weekly. Full creative strategy, Conversion API implementation, CRM-based attribution.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'b2b', title: 'LinkedIn Ads Management',
-          content: 'Sponsored Content, Lead Gen Forms, Message Ads, Document Ads. Best for B2B targeting by job title, seniority, company size. Min $3-5k/mo. Higher CPCs but way better lead quality. 65% lower cost per qualified lead after audience refinement.' },
+          content: 'Sponsored Content, Lead Gen Forms, Message Ads, Document Ads. Best for B2B targeting by job title, seniority, company size. Higher CPCs but way better lead quality. 65% lower cost per qualified lead after audience refinement.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'AI Automations',
           content: 'Custom workflow automation using Zapier, Make, n8n, and custom APIs. Lead nurture sequences, reporting automation, data sync, email sequences. Saves 15-20 hours per week. Simple workflows 1-2 weeks, complex 3-4 weeks to build.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'AI Agents',
@@ -74,7 +74,7 @@ async function seedIfEmpty() {
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'CRO - Conversion Rate Optimization',
           content: 'A/B testing, landing page optimization, funnel analysis, heatmaps and session recordings. Typical 30-60% improvement in first 90 days. Need 10k+ monthly visitors for A/B testing. Tools: VWO, Hotjar, GA4.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'b2b', title: 'Microsoft Ads Management',
-          content: 'Bing Search, Audience Network, LinkedIn-targeted search campaigns. Typically around 35% lower CPCs than Google Ads for the same keywords. Strong fit for B2B and older demographics. Often runs parallel to a Google Ads account to capture search volume Google misses. Min $2-3k/mo ad spend recommended.' },
+          content: 'Bing Search, Audience Network, LinkedIn-targeted search campaigns. Typically around 35% lower CPCs than Google Ads for the same keywords. Strong fit for B2B and older demographics. Often runs parallel to a Google Ads account to capture search volume Google misses.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Brand Strategy',
           content: 'Positioning, messaging frameworks, value proposition development, visual identity. Delivered as a brand guidelines document plus messaging matrix. Foundational work for companies repositioning or entering a new market. Usually a 3-5 week engagement, often paired with a website rebuild or paid ads relaunch.' },
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Web Development',
@@ -103,14 +103,56 @@ async function seedIfEmpty() {
           content: 'No. We do month-to-month. If we dont perform, you can walk. No hard feelings. We earn your business every month.' },
     ];
 
-    // Check which items already exist (by title match)
-    const existingPatterns = db.listPatterns({ limit: 200, minConfidence: 0 });
-    const existingTitles = new Set(existingPatterns.map(p => p.title));
+    // Match existing seed rows by title. New titles get seeded; seed rows whose
+    // CONTENT has drifted from this file get re-seeded (re-embed + swap) so this
+    // file stays the single source of truth. Learned (non-seed) patterns are
+    // never touched.
+    const existingPatterns = db.listPatterns({ limit: 500, minConfidence: 0, status: 'all' });
+    const existingByTitle = new Map(existingPatterns.map(p => [p.title, p]));
 
-    const newItems = content.filter(item => !existingTitles.has(item.title));
+    const newItems = [];
+    const driftedItems = [];
+    for (const item of content) {
+        const existing = existingByTitle.get(item.title);
+        if (!existing) { newItems.push(item); continue; }
+        if (existing.tagged_by !== 'seed') continue;
+        const storedContent = existing.messages && existing.messages[0] ? existing.messages[0].content : null;
+        if (storedContent !== item.content) driftedItems.push({ item, oldId: existing.id });
+    }
+
+    if (newItems.length === 0 && driftedItems.length === 0) {
+        console.log(`Knowledge base up to date (${existingPatterns.length} items)`);
+        return;
+    }
+
+    // Re-seed drifted items. Generate the new embedding FIRST and only swap once
+    // it succeeds, so a transient embedding failure never drops a knowledge row.
+    let updated = 0;
+    for (const { item, oldId } of driftedItems) {
+        try {
+            const embedding = await embeddingService.generateEmbeddings(item.content);
+            if (!embedding) continue;
+            db.deletePattern(oldId);
+            db.createPattern({
+                conversation_id: null,
+                pattern_type: item.type,
+                title: item.title,
+                description: item.industry,
+                messages: [{ role: 'knowledge', content: item.content }],
+                embedding,
+                booking_achieved: false,
+                tagged_by: 'seed',
+                confidence_score: 1.0
+            });
+            updated++;
+        } catch (err) {
+            console.error(`Error re-seeding "${item.title}":`, err.message);
+        }
+    }
+    if (updated > 0) console.log(`Knowledge base re-seeded ${updated} drifted items`);
 
     if (newItems.length === 0) {
-        console.log(`Knowledge base up to date (${existingPatterns.length} items)`);
+        console.log(`Knowledge base up to date (${existingPatterns.length} items, ${updated} updated)`);
         return;
     }
 
