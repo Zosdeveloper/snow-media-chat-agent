@@ -20,3 +20,10 @@ server/data/*.db-wal
 server/data/*.db-shm
 server/eval/last-report.md
 research/
+
+# Local data + transient tool state
+/data/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/reviews/
+.playwright-cli/
