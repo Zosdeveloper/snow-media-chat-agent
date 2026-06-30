@@ -19,6 +19,7 @@ server/data/*.db
 server/data/*.db-wal
 server/data/*.db-shm
 server/eval/last-report.md
+server/eval/sales-last-report.md
 research/
 
 # Local data + transient tool state

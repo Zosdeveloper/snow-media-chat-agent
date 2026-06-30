@@ -37,6 +37,17 @@ for **before/after** comparison around a prompt change and read the transcripts,
 not as an absolute score. A single regression in the should-close booked count or
 any disqualify leak is the signal that matters most.
 
+## Sales-craft battery (`sales-eval.mjs`)
+
+A second, harder harness focused on *sales craft*, not the rule contract. Run with
+`node eval/sales-eval.mjs`. It drives 18 tough, resistant buyer scenarios across the
+full objection taxonomy (price in 4 flavors, trust, stalls, incumbent/DIY, "what makes
+you different," rude, over-analytical) with a stronger adversarial buyer model, and
+grades each transcript on 7 craft dimensions (rapport, discovery, objection handling,
+control, urgency, credibility, closing) via a judge prompted as a veteran sales trainer.
+Use it to measure sales-craft lift after a prompt change. Writes `eval/sales-last-report.md`.
+Higher cost than the regression harness (Sonnet buyers, more turns).
+
 ## Editing scenarios
 
 Scenarios live at the top of `run-eval.mjs`. Each has a deterministic `opener`
