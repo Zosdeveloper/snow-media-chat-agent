@@ -80,19 +80,27 @@ async function seedIfEmpty() {
         { type: CONTENT_TYPES.SERVICE, industry: 'all', title: 'Web Development',
           content: 'WordPress for service businesses, content sites, and SEO-driven projects. Shopify for e-commerce. Conversion-focused builds with server-side rendering, JSON-LD schema, Core Web Vitals optimization, and on-page SEO baked in from day one. Typical build 4-8 weeks depending on scope. Includes GA4, conversion tracking, and handoff documentation.' },
 
-        // Resources (lead magnets)
+        // Resources (lead magnets). URLs are live pages on the Resource Hub
+        // (thesnowmedia.com/resources). Share the actual link in chat when a visitor
+        // won't book or isn't a fit, never as a dodge from the call.
         { type: CONTENT_TYPES.RESOURCE, industry: 'ecommerce', title: 'E-Commerce Ad Benchmark Report',
-          content: 'Free benchmark report with average CPC, CPA, ROAS, and conversion rates for e-commerce brands across Google and Meta. Compare your performance to industry averages.' },
+          content: 'Free benchmark report with average CPC, CPA, ROAS, and conversion rates for e-commerce brands across Google and Meta. Compare your performance to industry averages. Available free at https://thesnowmedia.com/resources/ecommerce-ad-benchmarks/' },
         { type: CONTENT_TYPES.RESOURCE, industry: 'home_services', title: 'Home Services Ad Benchmark Report',
-          content: 'Free benchmark report with average cost per lead, conversion rates, and budget recommendations for plumbing, HVAC, roofing, electrical, and solar businesses.' },
+          content: 'Free benchmark report with average cost per lead, conversion rates, and budget recommendations for plumbing, HVAC, roofing, electrical, and solar businesses. Available free at https://thesnowmedia.com/resources/home-services-ad-benchmarks/' },
+        { type: CONTENT_TYPES.RESOURCE, industry: 'consulting', title: 'Consulting Ad Benchmark Report',
+          content: 'Free benchmark report with average cost per lead, booked-call rates, and budget guidance for coaches, consultants, and professional services. Available free at https://thesnowmedia.com/resources/consulting-ad-benchmarks/' },
         { type: CONTENT_TYPES.RESOURCE, industry: 'all', title: 'Ad Budget Calculator',
-          content: 'Free interactive calculator to determine optimal ad spend based on your revenue goals, margins, and target CPA. Shows projected leads and ROI.' },
+          content: 'Free interactive calculator to determine optimal ad spend based on your revenue goals, margins, and target CPA. Shows projected leads and ROI. Available free at https://thesnowmedia.com/resources/ad-budget-calculator/' },
         { type: CONTENT_TYPES.RESOURCE, industry: 'all', title: 'AI Automation ROI Calculator',
-          content: 'Free calculator showing how much time and money you can save with AI automation. Input your current manual hours and see projected savings.' },
+          content: 'Free calculator showing how much time and money you can save with AI automation. Input your current manual hours and see projected savings. Available free at https://thesnowmedia.com/resources/ai-roi-calculator/' },
+        { type: CONTENT_TYPES.RESOURCE, industry: 'all', title: 'AI Readiness Assessment',
+          content: 'Free assessment that scores how ready your business is to adopt AI agents and automation, with the highest-leverage first moves for your situation. Available free at https://thesnowmedia.com/resources/ai-readiness-assessment/' },
         { type: CONTENT_TYPES.RESOURCE, industry: 'all', title: 'Agency Performance Scorecard',
-          content: 'Free scorecard to evaluate your current marketing agency or in-house team. Covers 12 key performance areas.' },
+          content: 'Free scorecard to evaluate your current marketing agency or in-house team. Covers 12 key performance areas. Available free at https://thesnowmedia.com/resources/agency-scorecard/' },
         { type: CONTENT_TYPES.RESOURCE, industry: 'all', title: 'Google Ads Audit Checklist',
-          content: 'Free 50-point checklist to audit your Google Ads account. Covers campaign structure, keyword strategy, ad copy, landing pages, tracking, and budget allocation.' },
+          content: 'Free 50-point checklist to audit your Google Ads account. Covers campaign structure, keyword strategy, ad copy, landing pages, tracking, and budget allocation. Available free at https://thesnowmedia.com/resources/google-ads-audit-checklist/' },
+        { type: CONTENT_TYPES.RESOURCE, industry: 'all', title: 'Meta Ads Audit Checklist',
+          content: 'Free checklist to audit your Meta (Facebook/Instagram) ads account: account structure, creative, audiences, pixel/CAPI tracking, and budget. Available free at https://thesnowmedia.com/resources/meta-ads-audit-checklist/' },
 
         // FAQs
         { type: CONTENT_TYPES.FAQ, industry: 'all', title: 'How long until I see results?',

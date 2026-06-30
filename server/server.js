@@ -362,8 +362,18 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
 
         // Post-close state: if the booking was already offered, tell the agent so it
         // follows <after_the_offer> instead of re-pitching the call from scratch.
+        // If the Calendly webhook has since CONFIRMED the booking, escalate to a
+        // hard stop-selling instruction (runtime change 4). The webhook only knows
+        // the email, so we read the confirmed flag off the conversation row here on
+        // the next turn rather than mutating the in-memory session from the webhook.
         if (bookingAlreadyOffered) {
-            contextMessage += '\n[STATE: You already offered the booking this session and the Book a Call button is showing. Follow <after_the_offer>: do not re-pitch from scratch, and do not re-ask for anything you already have.]';
+            let bookingConfirmed = false;
+            try { bookingConfirmed = db.isBookingConfirmed(sessionId); } catch (_e) {}
+            if (bookingConfirmed) {
+                contextMessage += '\n[STATE: This visitor has CONFIRMED their booking (Calendly fired the webhook). The call is locked in. Stop selling entirely: do not re-pitch, do not ask for anything, do not push another slot. Just be warm and human, set a light expectation for the call, and if they ask something that belongs on the call say it is a great thing to dig into live.]';
+            } else {
+                contextMessage += '\n[STATE: You already offered the booking this session and the Book a Call button is showing. Follow <after_the_offer>: do not re-pitch from scratch, and do not re-ask for anything you already have.]';
+            }
         }
 
         // Two-lane retrieval for the dynamic system block:

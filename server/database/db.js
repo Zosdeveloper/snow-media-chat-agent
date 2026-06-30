@@ -405,6 +405,18 @@ function getConversation(sessionId) {
 }
 
 /**
+ * Cheap check of whether the Calendly webhook has confirmed this conversation's
+ * booking. Used to reflect a confirmed booking into the live chat session so the
+ * agent stops selling once the call is actually locked in. Single-column lookup
+ * by primary key, safe to call per-turn (we gate it to post-offer turns anyway).
+ */
+function isBookingConfirmed(sessionId) {
+    const db = getDb();
+    const row = db.prepare('SELECT booking_confirmed FROM conversations WHERE id = ?').get(sessionId);
+    return !!(row && row.booking_confirmed);
+}
+
+/**
  * List conversations with pagination and filtering
  */
 function listConversations({ limit = 50, offset = 0, outcome = null, orderBy = 'created_at', order = 'DESC' } = {}) {
@@ -648,11 +660,16 @@ function createPattern(data) {
         status
     );
 
-    // Add to vector index if available
+    // Add to vector index if available.
+    // sqlite-vec's vec0 requires the primary key bound as a SQLITE_INTEGER, but
+    // better-sqlite3 binds plain JS numbers as floats, which vec0 rejects with the
+    // misleading "Only integers are allowed for primary key values" error. Bind a
+    // BigInt so it arrives as an int64. (Without this, every auto-tagged pattern
+    // silently failed to index and never became retrievable for RAG.)
     if (vecLoaded && data.embedding) {
         try {
             const embeddingStr = `[${data.embedding.join(',')}]`;
-            db.prepare(`INSERT INTO vec_patterns (pattern_id, embedding) VALUES (?, ?)`).run(result.lastInsertRowid, embeddingStr);
+            db.prepare(`INSERT INTO vec_patterns (pattern_id, embedding) VALUES (?, ?)`).run(BigInt(result.lastInsertRowid), embeddingStr);
         } catch (err) {
             console.error('Error adding pattern to vector index:', err.message);
         }
@@ -724,7 +741,9 @@ function deletePattern(patternId) {
     // Remove from vector index first
     if (vecLoaded) {
         try {
-            db.prepare('DELETE FROM vec_patterns WHERE pattern_id = ?').run(patternId);
+            // BigInt for the same vec0 SQLITE_INTEGER reason as the insert above;
+            // a float-bound pattern_id would not match and would orphan the vec row.
+            db.prepare('DELETE FROM vec_patterns WHERE pattern_id = ?').run(BigInt(patternId));
         } catch (err) {
             console.error('Error removing pattern from vector index:', err.message);
         }
@@ -1333,6 +1352,7 @@ module.exports = {
     upsertConversation,
     updateConversationLeadData,
     getConversation,
+    isBookingConfirmed,
     listConversations,
     markAbandoned,
     setConversationIntent,
