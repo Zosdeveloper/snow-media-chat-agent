@@ -247,6 +247,21 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             content: sanitizedMessage
         });
 
+        // Post-close state detection. bookingAlreadyOffered = we fired [BOOK_CALL]
+        // on a prior turn, so the "Book a Call" button is already showing. Drives
+        // the <after_the_offer> context flag and funnel instrumentation below.
+        const bookingAlreadyOffered = session.messages.some(
+            m => m.role === 'assistant' && m.content && m.content.includes('[BOOK_CALL]')
+        );
+        const hadEmailAtTurnStart = !!session.leadData.email;
+        if (bookingAlreadyOffered) {
+            // Visitor kept chatting after the booking offer. Tells us how often the
+            // post-close state actually happens (validates <after_the_offer>).
+            try {
+                db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'chat_continued_after_booking' });
+            } catch (_e) {}
+        }
+
         // Persist user message (fire and forget)
         try {
             db.addMessage(sessionId, 'user', message);
@@ -343,6 +358,12 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             session.qualificationScore = qualification.score;
         } catch (err) {
             console.error('Qualification signal error:', err.message);
+        }
+
+        // Post-close state: if the booking was already offered, tell the agent so it
+        // follows <after_the_offer> instead of re-pitching the call from scratch.
+        if (bookingAlreadyOffered) {
+            contextMessage += '\n[STATE: You already offered the booking this session and the Book a Call button is showing. Follow <after_the_offer>: do not re-pitch from scratch, and do not re-ask for anything you already have.]';
         }
 
         // Two-lane retrieval for the dynamic system block:
@@ -643,6 +664,20 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         } catch (err) {
             console.error('Error updating lead data:', err.message);
         }
+
+        // Funnel instrumentation: surface the post-close lead leaks so we can size
+        // them on real traffic before building the heavier fixes (email-gated button).
+        try {
+            if (showBookingCalendar && !session.leadData.email) {
+                // Offered the booking but we have no email. If they abandon Calendly,
+                // the lead is gone. This is the leak we most want to close.
+                db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'booking_offered_no_email' });
+            } else if (!hadEmailAtTurnStart && session.leadData.email && !showBookingCalendar && !bookingAlreadyOffered) {
+                // Captured an email without ever offering the booking. Should be rare
+                // (the prompt couples them); flags drift if it climbs.
+                db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'email_captured_no_booking' });
+            }
+        } catch (_e) {}
 
         // Add assistant message to history
         session.messages.push({
