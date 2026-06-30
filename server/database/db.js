@@ -269,6 +269,39 @@ async function initialize() {
         console.log('Chat metrics migration note:', err.message);
     }
 
+    // Migration: service-interest + meeting-outcome columns and a generic
+    // signal_events table (bot defense, handoffs, hot leads). Ports the
+    // tracking the Elevated Collective agent had that Snow Media lacked.
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_signal_and_outcome_tracking'").get();
+        if (!alreadyRun) {
+            const cols = db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name);
+            if (!cols.includes('service_interest')) db.exec("ALTER TABLE conversations ADD COLUMN service_interest TEXT");
+            if (!cols.includes('meeting_outcome')) db.exec("ALTER TABLE conversations ADD COLUMN meeting_outcome TEXT");
+            if (!cols.includes('meeting_outcome_at')) db.exec("ALTER TABLE conversations ADD COLUMN meeting_outcome_at DATETIME");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_service ON conversations(service_interest)");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_meeting_outcome ON conversations(meeting_outcome)");
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS signal_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT,
+                    session_id TEXT,
+                    event_type TEXT NOT NULL,           -- bot_dropped | handoff | hot_lead
+                    label TEXT,                          -- honeypot | prompt_injection | keyword_spam | human_request | frustration | high_value
+                    detail TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_signal_events_type ON signal_events(event_type, created_at);
+                CREATE INDEX IF NOT EXISTS idx_signal_events_conversation ON signal_events(conversation_id);
+            `);
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_signal_and_outcome_tracking')").run();
+            console.log('Added service_interest/meeting_outcome columns + signal_events table');
+        }
+    } catch (err) {
+        console.log('Signal/outcome migration note:', err.message);
+    }
+
     // Create virtual table for vector search if extension loaded
     if (vecLoaded) {
         try {
@@ -801,6 +834,52 @@ function logToolEvent({ conversationId, toolName, triggerReason = null, userMess
 }
 
 /**
+ * Log a generic signal event (bot defense drop, human handoff, hot lead).
+ * Fire-and-forget; conversation_id may be null for pre-conversation bot drops.
+ */
+function logSignalEvent({ conversationId = null, sessionId = null, eventType, label = null, detail = null }) {
+    try {
+        getDb().prepare(`
+            INSERT INTO signal_events (conversation_id, session_id, event_type, label, detail)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            conversationId,
+            sessionId,
+            eventType,
+            label,
+            detail ? String(detail).substring(0, 500) : null
+        );
+    } catch (err) {
+        console.error('logSignalEvent error:', err.message);
+    }
+}
+
+/**
+ * Set the detected service interest for a conversation (latest match wins).
+ * Fire-and-forget; only updates an existing conversation row.
+ */
+function setServiceInterest(sessionId, service) {
+    try {
+        getDb().prepare('UPDATE conversations SET service_interest = ? WHERE id = ?').run(service, sessionId);
+    } catch (err) {
+        console.error('setServiceInterest error:', err.message);
+    }
+}
+
+/**
+ * Set the post-booking meeting outcome (show | no_show | canceled | pending).
+ * Used by the admin "did they show up?" review and the Calendly cancel webhook.
+ */
+function setMeetingOutcome(sessionId, outcome) {
+    const db = getDb();
+    return db.prepare(`
+        UPDATE conversations
+        SET meeting_outcome = ?, meeting_outcome_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(outcome, sessionId);
+}
+
+/**
  * Get tool-event counts for a time window. Used by the admin analytics query.
  */
 function getToolEventStats(days = 14) {
@@ -1279,6 +1358,9 @@ module.exports = {
     getGuardrailStats,
     logChatMetric,
     getChatMetricStats,
+    logSignalEvent,
+    setServiceInterest,
+    setMeetingOutcome,
 
     // Follow-ups
     getFollowUpCandidates,

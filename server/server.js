@@ -27,6 +27,7 @@ const followUpService = require('./services/followUpService');
 const spamFilter = require('./services/spamFilter');
 const intentClassifier = require('./services/intentClassifier');
 const qualificationService = require('./services/qualificationService');
+const serviceClassifier = require('./services/serviceClassifier');
 const modelHealth = require('./services/modelHealth');
 const guardrails = require('./services/guardrails');
 
@@ -150,6 +151,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // Return a generic response so the bot thinks it worked. Don't save anything.
         if (spamFilter.checkHoneypot(req.body)) {
             console.warn('[HONEYPOT] Tripped on session', sessionId);
+            db.logSignalEvent({ sessionId, eventType: 'bot_dropped', label: 'honeypot' });
             return res.json({
                 message: "Thanks, I'll take a look and get back to you.",
                 quickReplies: [],
@@ -233,8 +235,11 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             alerts.databaseError(err, { sessionId, op: 'upsertConversation' });
         }
 
-        // Prompt injection detection
+        // Prompt injection detection. A modified return means a pattern fired.
         const sanitizedMessage = guardrails.detectPromptInjection(message);
+        if (sanitizedMessage !== message) {
+            db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'bot_dropped', label: 'prompt_injection' });
+        }
 
         // Add user message to history
         session.messages.push({
@@ -248,6 +253,18 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         } catch (err) {
             console.error('Error persisting user message:', err.message);
             alerts.databaseError(err, { sessionId, op: 'addMessage:user' });
+        }
+
+        // Service-interest classification (which Snow Media service they ask about).
+        // Cheap keyword match, latest match wins. Fire-and-forget.
+        try {
+            const svc = serviceClassifier.classify(message);
+            if (svc) {
+                session.serviceInterest = svc.slug;
+                db.setServiceInterest(sessionId, svc.slug);
+            }
+        } catch (err) {
+            console.error('Service classify error:', err.message);
         }
 
         // Keyword pre-filter: only runs on the first user message.
@@ -267,6 +284,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
 
                 if (match.response) {
                     console.log(`[KEYWORD FILTER] ${match.intent} match on session ${sessionId}`);
+                    db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'bot_dropped', label: 'keyword_spam', detail: match.intent });
                     session.messages.push({ role: 'assistant', content: match.response });
                     try {
                         db.addMessage(sessionId, 'assistant', match.response);
@@ -760,6 +778,7 @@ function detectHandoffTriggers(message, session, sessionId) {
     ];
     if (humanPhrases.some(p => lower.includes(p))) {
         alerts.humanHandoff({ ...alertContext, reason: 'Explicit request for human' });
+        db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'handoff', label: 'human_request', detail: message.substring(0, 200) });
         return;
     }
 
@@ -779,6 +798,7 @@ function detectHandoffTriggers(message, session, sessionId) {
         });
         if (frustrationSignals.length >= 2) {
             alerts.humanHandoff({ ...alertContext, reason: 'Frustration detected (2+ negative signals)' });
+            db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'handoff', label: 'frustration', detail: message.substring(0, 200) });
             return;
         }
     }
@@ -791,6 +811,7 @@ function detectHandoffTriggers(message, session, sessionId) {
     ];
     if (highValuePatterns.some(p => p.test(message))) {
         alerts.hotLead({ ...alertContext, reason: 'High-value signal detected in message' });
+        db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'hot_lead', label: 'high_value', detail: message.substring(0, 200) });
     }
 }
 
@@ -961,6 +982,23 @@ app.post('/api/webhooks/calendly', async (req, res) => {
 
     const event = req.body?.event;
     const payload = req.body?.payload || {};
+
+    // Cancellation: auto-mark the booked meeting as canceled so Show Rate stays
+    // honest. Requires invitee.canceled to be subscribed; manual marking in the
+    // dashboard still overrides this either way.
+    if (event === 'invitee.canceled') {
+        const cancelEmail = (payload.email || '').trim();
+        try {
+            const row = db.getDb().prepare(
+                "SELECT id FROM conversations WHERE lead_email = ? AND booking_confirmed = 1 ORDER BY booking_confirmed_at DESC LIMIT 1"
+            ).get(cancelEmail);
+            if (row) db.setMeetingOutcome(row.id, 'canceled');
+            return res.status(200).json({ ok: true, canceled: !!row });
+        } catch (err) {
+            console.error('[CALENDLY WEBHOOK] cancel handling error:', err.message);
+            return res.status(200).json({ ok: true });
+        }
+    }
 
     if (event !== 'invitee.created') {
         // Acknowledge but ignore other event types for now

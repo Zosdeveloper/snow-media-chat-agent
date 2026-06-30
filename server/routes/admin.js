@@ -147,6 +147,28 @@ router.patch('/conversations/:id/outcome', async (req, res) => {
     }
 });
 
+/**
+ * PATCH /api/admin/conversations/:id/meeting-outcome
+ * Record whether a confirmed booking actually happened. Drives Show Rate.
+ */
+router.patch('/conversations/:id/meeting-outcome', (req, res) => {
+    try {
+        const { meeting_outcome } = req.body;
+        if (!['show', 'no_show', 'canceled', 'pending'].includes(meeting_outcome)) {
+            return res.status(400).json({ error: 'Invalid meeting_outcome. Must be: show, no_show, canceled, or pending' });
+        }
+        const conversation = db.getConversation(req.params.id);
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        db.setMeetingOutcome(req.params.id, meeting_outcome);
+        res.json({ success: true, meeting_outcome });
+    } catch (error) {
+        console.error('Error updating meeting outcome:', error.message);
+        res.status(500).json({ error: 'Failed to update meeting outcome' });
+    }
+});
+
 // ============================================
 // PATTERN ENDPOINTS
 // ============================================
@@ -544,6 +566,86 @@ router.get('/analytics', (req, res) => {
             ORDER BY count DESC
         `).all();
 
+        // ── Ported metrics (parity with the Elevated Collective agent) ──
+
+        // Service interest: which Snow Media service drives chats / leads / bookings
+        const serviceInterest = dbInstance.prepare(`
+            SELECT
+                service_interest as service,
+                COUNT(*) as total,
+                SUM(CASE WHEN lead_email IS NOT NULL OR lead_phone IS NOT NULL THEN 1 ELSE 0 END) as leads,
+                SUM(CASE WHEN booking_confirmed = 1 OR outcome = 'converted' THEN 1 ELSE 0 END) as booked
+            FROM conversations
+            WHERE service_interest IS NOT NULL AND service_interest != ''
+            GROUP BY service_interest
+            ORDER BY total DESC
+        `).all();
+
+        // Meeting outcomes: did the booked call actually happen?
+        const mo = dbInstance.prepare(`
+            SELECT
+                SUM(CASE WHEN meeting_outcome = 'show' THEN 1 ELSE 0 END) as show_count,
+                SUM(CASE WHEN meeting_outcome = 'no_show' THEN 1 ELSE 0 END) as no_show,
+                SUM(CASE WHEN meeting_outcome = 'canceled' THEN 1 ELSE 0 END) as canceled,
+                SUM(CASE WHEN booking_confirmed = 1 AND (meeting_outcome IS NULL OR meeting_outcome = 'pending') THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as confirmed_total
+            FROM conversations
+        `).get();
+        const moShow = mo.show_count || 0, moNoShow = mo.no_show || 0;
+        const moCanceled = mo.canceled || 0, moPending = mo.pending || 0, moConfirmed = mo.confirmed_total || 0;
+        const showRate = (moShow + moNoShow) > 0 ? Math.round((moShow / (moShow + moNoShow)) * 100) : 0;
+
+        // Bot / spam defense drops (honeypot, prompt-injection, keyword-spam)
+        const botByLabel = dbInstance.prepare(`
+            SELECT label, COUNT(*) as count
+            FROM signal_events
+            WHERE event_type = 'bot_dropped'
+            GROUP BY label
+            ORDER BY count DESC
+        `).all();
+        const botTotal = botByLabel.reduce((s, r) => s + r.count, 0);
+
+        // Human-handoff / hot-lead signals
+        const signalCounts = dbInstance.prepare(`
+            SELECT event_type, COUNT(*) as count
+            FROM signal_events
+            WHERE event_type IN ('handoff', 'hot_lead')
+            GROUP BY event_type
+        `).all();
+        const handoffTotal = (signalCounts.find(r => r.event_type === 'handoff') || {}).count || 0;
+        const hotLeadTotal = (signalCounts.find(r => r.event_type === 'hot_lead') || {}).count || 0;
+
+        // Drop-offs: conversations that stalled with no lead / booking
+        const dropoffs = dbInstance.prepare(`
+            SELECT
+                c.id, c.created_at, c.updated_at, c.message_count, c.outcome, c.service_interest,
+                (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY id ASC LIMIT 1) as first_user,
+                (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) as last_assistant
+            FROM conversations c
+            WHERE c.booking_confirmed = 0
+              AND c.outcome NOT IN ('converted', 'contact_captured')
+              AND c.lead_email IS NULL AND c.lead_phone IS NULL
+              AND c.message_count >= 2
+              AND (c.outcome = 'abandoned' OR (c.outcome = 'in_progress' AND datetime(c.updated_at) < datetime('now', '-30 minutes')))
+            ORDER BY c.updated_at DESC
+            LIMIT 20
+        `).all().map(d => ({
+            id: d.id,
+            created_at: d.created_at,
+            message_count: d.message_count,
+            outcome: d.outcome,
+            service_interest: d.service_interest,
+            first_user: d.first_user ? d.first_user.substring(0, 120) : '',
+            last_assistant: d.last_assistant ? d.last_assistant.substring(0, 120) : '',
+            stage: d.message_count >= 3 ? 'engaged' : 'disengaged'
+        }));
+
+        // Derived rates
+        const totalConvos = conversionStats.total || 0;
+        const engagementRate = totalConvos > 0 ? Math.round((funnel.engaged / totalConvos) * 100) : 0;
+        const offerToBookRate = funnel.book_intent > 0 ? Math.round((funnel.confirmed / funnel.book_intent) * 100) : 0;
+        const blockRate = (botTotal + totalConvos) > 0 ? Math.round((botTotal / (botTotal + totalConvos)) * 100) : 0;
+
         res.json({
             conversion: {
                 total: conversionStats.total || 0,
@@ -568,7 +670,21 @@ router.get('/analytics', (req, res) => {
             bookingBreakdown: bookingBreakdown,
             triggerReasons: triggerReasons,
             niches: niches,
-            intents: intents
+            intents: intents,
+            serviceInterest: serviceInterest,
+            meetingOutcomes: {
+                show: moShow,
+                no_show: moNoShow,
+                canceled: moCanceled,
+                pending: moPending,
+                confirmed_total: moConfirmed,
+                showRate
+            },
+            engagementRate,
+            offerToBookRate,
+            botDefense: { total: botTotal, byLabel: botByLabel, blockRate },
+            handoffs: { total: handoffTotal, hotLeads: hotLeadTotal },
+            dropoffs
         });
     } catch (error) {
         console.error('Error getting analytics:', error.message);
