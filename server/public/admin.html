@@ -179,6 +179,51 @@
             border-radius: 3px;
         }
 
+        /* ── Overview KPI grid (windowed, with deltas) ──────────── */
+        .overview-bar {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .overview-window { font-size: 14px; color: var(--text-2); }
+        .range-tabs {
+            display: inline-flex; background: var(--tile); border: 1px solid var(--border);
+            border-radius: 999px; padding: 3px; gap: 2px;
+        }
+        .range-tab {
+            font-family: inherit; padding: 6px 15px; border: none; background: transparent;
+            color: var(--text-2); font-size: 13px; font-weight: 600; border-radius: 999px;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .range-tab:hover { color: var(--navy-2); }
+        .range-tab.active { background: var(--navy); color: #fff; }
+
+        .kpi-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+            gap: 16px; margin-bottom: 26px;
+        }
+        .kpi-card {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow-sm);
+        }
+        .kpi-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+        .kpi-label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+        .kpi-value {
+            font-family: var(--display); font-size: 40px; font-weight: 700; line-height: 1;
+            font-variant-numeric: tabular-nums; color: var(--navy);
+        }
+        .kpi-value.ink { color: var(--ink); }
+        .kpi-value.green { color: var(--success); }
+        .kpi-value.gold { color: var(--gold-deep); }
+        .kpi-value.danger { color: var(--danger); }
+        .kpi-sub { font-size: 12.5px; color: var(--text-3); margin-top: 10px; }
+        .kpi-delta {
+            font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+            padding: 2px 8px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+        }
+        .kpi-delta.up { color: var(--success); background: var(--success-bg); }
+        .kpi-delta.down { color: var(--danger); background: var(--danger-bg); }
+        .kpi-delta.flat { color: var(--text-3); background: var(--tile); }
+
         /* ── KPI band (stat tiles, like the site) ───────────────── */
         .hero-grid {
             display: grid;
@@ -721,14 +766,14 @@
 
         <!-- View Tabs -->
         <div class="view-tabs">
-            <button class="view-tab active" data-view="conversations" onclick="switchView('conversations')">Conversations</button>
-            <button class="view-tab" data-view="analytics" onclick="switchView('analytics')">Analytics</button>
+            <button class="view-tab active" data-view="analytics" onclick="switchView('analytics')">Overview</button>
+            <button class="view-tab" data-view="conversations" onclick="switchView('conversations')">Conversations</button>
             <button class="view-tab" data-view="experiments" onclick="switchView('experiments')">Experiments</button>
             <button class="view-tab" data-view="agent" onclick="switchView('agent')">Agent</button>
         </div>
 
         <!-- Conversations View -->
-        <div id="conversationsView">
+        <div id="conversationsView" class="hidden">
 
         <!-- Hero KPIs -->
         <div class="hero-grid">
@@ -818,8 +863,20 @@
 
         </div><!-- End Conversations View -->
 
-        <!-- Analytics View -->
-        <div id="analyticsView" class="hidden">
+        <!-- Analytics / Overview View -->
+        <div id="analyticsView">
+            <!-- Range selector + windowed KPI grid -->
+            <div class="overview-bar">
+                <div class="overview-window" id="overviewWindow">Last 30 days · compared to previous 30 days</div>
+                <div class="range-tabs">
+                    <button class="range-tab" data-range="24h">24h</button>
+                    <button class="range-tab" data-range="7d">7d</button>
+                    <button class="range-tab active" data-range="30d">30d</button>
+                    <button class="range-tab" data-range="all">All</button>
+                </div>
+            </div>
+            <div class="kpi-grid" id="kpiGrid"><div class="loading">Loading</div></div>
+
             <!-- Daily trend (full width) -->
             <div class="analytics-card" style="margin-bottom:18px;">
                 <div class="card-head">
@@ -830,39 +887,6 @@
                 <div class="trend-legend">
                     <span><i class="dot total"></i> Conversations</span>
                     <span><i class="dot booked"></i> Booked</span>
-                </div>
-            </div>
-
-            <!-- Compact KPI trio -->
-            <div class="analytics-grid" style="margin-bottom:18px;">
-                <div class="analytics-card">
-                    <h3>Conversion Rate</h3>
-                    <div class="big-stat green" id="conversionRate">0%</div>
-                    <div class="big-stat-label">of conversations booked a call</div>
-                </div>
-
-                <div class="analytics-card">
-                    <h3>Avg Messages Before Booking</h3>
-                    <div class="big-stat" id="avgMessages">0</div>
-                    <div class="big-stat-label">messages in converted conversations</div>
-                </div>
-
-                <div class="analytics-card">
-                    <h3>Leads with Contact Info</h3>
-                    <div class="big-stat" id="leadsWithContact">0</div>
-                    <div class="big-stat-label">visitors shared email or phone</div>
-                </div>
-
-                <div class="analytics-card">
-                    <h3>Engagement Rate</h3>
-                    <div class="big-stat" id="engagementRate">0%</div>
-                    <div class="big-stat-label">reached 3+ messages</div>
-                </div>
-
-                <div class="analytics-card">
-                    <h3>Offer-to-Book Rate</h3>
-                    <div class="big-stat" id="offerToBookRate">0%</div>
-                    <div class="big-stat-label">of offered calls were confirmed</div>
                 </div>
             </div>
 
@@ -1001,6 +1025,7 @@
         let currentFilter = 'all';
         let currentConversationId = null;
         let conversations = [];
+        let currentRange = '30d';
 
         // API base URL
         const API_BASE = window.location.origin;
@@ -1036,6 +1061,16 @@
                     tab.classList.add('active');
                     currentFilter = tab.dataset.filter;
                     loadConversations();
+                });
+            });
+
+            // Range tabs (Overview window)
+            document.querySelectorAll('.range-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.range-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    currentRange = tab.dataset.range;
+                    loadOverview();
                 });
             });
         });
@@ -1115,7 +1150,8 @@
         }
 
         async function loadDashboard() {
-            await Promise.all([loadStats(), loadFollowUpStats(), loadConversations()]);
+            // Overview is the default landing tab, so load its data up front too.
+            await Promise.all([loadStats(), loadFollowUpStats(), loadConversations(), loadOverview(), loadAnalytics()]);
         }
 
         async function loadStats() {
@@ -1361,6 +1397,7 @@
             document.getElementById('agentView').classList.toggle('hidden', view !== 'agent');
 
             if (view === 'analytics') {
+                loadOverview();
                 loadAnalytics();
             } else if (view === 'experiments') {
                 loadExperiments();
@@ -1573,6 +1610,67 @@
             }
         }
 
+        // ── Overview KPI grid (windowed, with delta-vs-previous chips) ──
+        const RANGE_LABELS = {
+            '24h': 'Last 24 hours · compared to previous 24 hours',
+            '7d': 'Last 7 days · compared to previous 7 days',
+            '30d': 'Last 30 days · compared to previous 30 days',
+            'all': 'All time · no comparison period'
+        };
+
+        const KPI_META = [
+            { key: 'conversations', label: 'Conversations', color: 'ink' },
+            { key: 'engagementRate', label: 'Engagement Rate', color: 'green', suffix: '%' },
+            { key: 'leadRate', label: 'Lead Rate', color: 'gold', suffix: '%' },
+            { key: 'bookings', label: 'Bookings', color: 'gold' },
+            { key: 'offerToBookRate', label: 'Offer-to-Book Rate', color: 'gold', suffix: '%' },
+            { key: 'showRate', label: 'Show Rate', color: 'green', suffix: '%' },
+            { key: 'llmCost', label: 'LLM Cost', color: 'ink' },
+            { key: 'cacheHitRate', label: 'Cache Hit Rate', color: 'ink', suffix: '%' },
+            { key: 'avgMessages', label: 'Avg Messages', color: 'ink' },
+            { key: 'botBlockRate', label: 'Bot Block Rate', color: 'danger', suffix: '%' }
+        ];
+
+        async function loadOverview() {
+            document.getElementById('overviewWindow').textContent = RANGE_LABELS[currentRange] || '';
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/overview?range=${encodeURIComponent(currentRange)}`, {
+                    headers: { 'X-Admin-Api-Key': apiKey }
+                });
+                const data = await res.json();
+                renderKpiGrid(data);
+            } catch (e) {
+                console.error('Failed to load overview:', e);
+                document.getElementById('kpiGrid').innerHTML = '<div class="loading">Failed to load</div>';
+            }
+        }
+
+        function renderDeltaChip(delta, unit, hasPrev) {
+            if (!hasPrev || delta == null) return '';
+            const u = unit === 'pct' ? 'pp' : '%';
+            if (delta === 0) return `<span class="kpi-delta flat">· +0${u}</span>`;
+            const up = delta > 0;
+            return `<span class="kpi-delta ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${up ? '+' : ''}${delta}${u}</span>`;
+        }
+
+        function renderKpiGrid(data) {
+            const grid = document.getElementById('kpiGrid');
+            const kpis = data.kpis || {};
+            grid.innerHTML = KPI_META.map(m => {
+                const k = kpis[m.key] || {};
+                const val = (k.prefix || '') + (k.value != null ? k.value : 0) + (m.suffix || '');
+                return `
+                    <div class="kpi-card">
+                        <div class="kpi-top">
+                            <span class="kpi-label">${m.label}</span>
+                            ${renderDeltaChip(k.delta, k.unit, data.hasPrev)}
+                        </div>
+                        <div class="kpi-value ${m.color}">${escapeHtml(String(val))}</div>
+                        <div class="kpi-sub">${escapeHtml(k.sub || '')}</div>
+                    </div>`;
+            }).join('');
+        }
+
         async function loadAnalytics() {
             try {
                 const res = await fetch(`${API_BASE}/api/admin/analytics`, {
@@ -1580,20 +1678,13 @@
                 });
                 const data = await res.json();
 
-                // Compact KPIs
-                document.getElementById('conversionRate').textContent = data.conversion.rate + '%';
-                document.getElementById('avgMessages').textContent = data.messages.avgBeforeConversion || '-';
-                document.getElementById('leadsWithContact').textContent = data.leadsWithContact;
-
                 renderTrend(data.daily || []);
                 renderFunnel(data.funnel || {});
                 renderBookingBreakdown(data.bookingBreakdown || {}, data.triggerReasons || []);
                 renderNiches(data.niches || []);
                 renderIntents(data.intents || []);
 
-                // Ported metrics (parity with Elevated Collective)
-                document.getElementById('engagementRate').textContent = (data.engagementRate != null ? data.engagementRate : 0) + '%';
-                document.getElementById('offerToBookRate').textContent = (data.offerToBookRate != null ? data.offerToBookRate : 0) + '%';
+                // Ported metric panels (parity with Elevated Collective)
                 renderServiceInterest(data.serviceInterest || []);
                 renderShowRate(data.meetingOutcomes || {});
                 renderBotDefense(data.botDefense || {});

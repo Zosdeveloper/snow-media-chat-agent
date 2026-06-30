@@ -693,6 +693,127 @@ router.get('/analytics', (req, res) => {
 });
 
 /**
+ * Resolve a range key to SQLite datetime offset strings for the current window
+ * and the immediately-preceding window of equal length (for delta chips).
+ */
+function rangeOffsets(range) {
+    const days = { '24h': 1, '7d': 7, '30d': 30 }[range];
+    if (!days) return { cur: '-1000 years', prevStart: null, prevEnd: null, hasPrev: false };
+    return { cur: `-${days} days`, prevStart: `-${days * 2} days`, prevEnd: `-${days} days`, hasPrev: true };
+}
+
+/**
+ * GET /api/admin/overview?range=24h|7d|30d|all
+ * Headline KPI grid for the selected window, each with a delta vs the previous
+ * equal-length window. Drives the top-of-dashboard tracking cards.
+ */
+router.get('/overview', (req, res) => {
+    try {
+        const range = ['24h', '7d', '30d', 'all'].includes(req.query.range) ? req.query.range : '30d';
+        const r = rangeOffsets(range);
+        const dbi = db.getDb();
+        const pricing = config.modelPricing || {};
+
+        // Conversation-derived counts for a window (endOffset null = up to now)
+        const convAgg = (startOffset, endOffset) => {
+            const where = endOffset
+                ? "created_at >= datetime('now', ?) AND created_at < datetime('now', ?)"
+                : "created_at >= datetime('now', ?)";
+            const params = endOffset ? [startOffset, endOffset] : [startOffset];
+            return dbi.prepare(`
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN message_count >= 3 THEN 1 ELSE 0 END) as engaged,
+                    SUM(CASE WHEN lead_email IS NOT NULL OR lead_phone IS NOT NULL THEN 1 ELSE 0 END) as leads,
+                    SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as bookings,
+                    SUM(CASE WHEN booking_trigger_reason IS NOT NULL THEN 1 ELSE 0 END) as offered,
+                    SUM(CASE WHEN meeting_outcome = 'show' THEN 1 ELSE 0 END) as shows,
+                    SUM(CASE WHEN meeting_outcome = 'no_show' THEN 1 ELSE 0 END) as no_shows,
+                    SUM(CASE WHEN booking_confirmed = 1 AND (meeting_outcome IS NULL OR meeting_outcome = 'pending') THEN 1 ELSE 0 END) as pending,
+                    COALESCE(SUM(message_count), 0) as msg_sum
+                FROM conversations WHERE ${where}
+            `).get(...params);
+        };
+        const botCount = (startOffset, endOffset) => {
+            const where = endOffset
+                ? "event_type = 'bot_dropped' AND created_at >= datetime('now', ?) AND created_at < datetime('now', ?)"
+                : "event_type = 'bot_dropped' AND created_at >= datetime('now', ?)";
+            const params = endOffset ? [startOffset, endOffset] : [startOffset];
+            return dbi.prepare(`SELECT COUNT(*) as c FROM signal_events WHERE ${where}`).get(...params).c;
+        };
+        const costAgg = (startOffset, endOffset) => {
+            const where = endOffset
+                ? "created_at >= datetime('now', ?) AND created_at < datetime('now', ?)"
+                : "created_at >= datetime('now', ?)";
+            const params = endOffset ? [startOffset, endOffset] : [startOffset];
+            const rows = dbi.prepare(`
+                SELECT model,
+                    SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,
+                    SUM(cache_read_tokens) as cache_read_tokens, SUM(cache_creation_tokens) as cache_creation_tokens
+                FROM chat_metrics WHERE ${where} GROUP BY model
+            `).all(...params);
+            let cost = 0, inTok = 0, outTok = 0, cacheRead = 0;
+            for (const m of rows) {
+                inTok += m.input_tokens || 0; outTok += m.output_tokens || 0; cacheRead += m.cache_read_tokens || 0;
+                const p = pricing[m.model];
+                if (!p) continue;
+                cost += (m.input_tokens / 1e6) * p.input + (m.output_tokens / 1e6) * p.output
+                      + (m.cache_read_tokens / 1e6) * p.cacheRead + (m.cache_creation_tokens / 1e6) * p.cacheWrite;
+            }
+            return { cost, inTok, outTok, cacheRead };
+        };
+
+        const cur = convAgg(r.cur, null);
+        const prev = r.hasPrev ? convAgg(r.prevStart, r.prevEnd) : null;
+        const curBot = botCount(r.cur, null);
+        const prevBot = r.hasPrev ? botCount(r.prevStart, r.prevEnd) : 0;
+        const curCost = costAgg(r.cur, null);
+        const prevCost = r.hasPrev ? costAgg(r.prevStart, r.prevEnd) : null;
+
+        const round1 = (v) => Math.round(v * 10) / 10;
+        const rate = (n, d) => d > 0 ? (n / d) * 100 : 0;
+        const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0);
+        const pctDelta = (c, p) => (p && p > 0) ? Math.round(((c - p) / p) * 100) : null; // count metrics: % change
+        const ppDelta = (c, p) => r.hasPrev ? round1(c - p) : null;                        // rate metrics: percentage points
+
+        // Current-window rates
+        const curEng = rate(cur.engaged, cur.total);
+        const curLead = rate(cur.leads, cur.total);
+        const curOffer = cur.offered > 0 ? rate(cur.bookings, cur.offered) : 0;
+        const curShow = (cur.shows + cur.no_shows) > 0 ? rate(cur.shows, cur.shows + cur.no_shows) : 0;
+        const curAvg = cur.total > 0 ? cur.msg_sum / cur.total : 0;
+        const curCacheR = (curCost.inTok + curCost.cacheRead) > 0 ? rate(curCost.cacheRead, curCost.inTok + curCost.cacheRead) : 0;
+        const curBotR = (curBot + cur.total) > 0 ? rate(curBot, curBot + cur.total) : 0;
+        // Previous-window rates (only when hasPrev)
+        const pEng = prev ? rate(prev.engaged, prev.total) : 0;
+        const pLead = prev ? rate(prev.leads, prev.total) : 0;
+        const pOffer = prev && prev.offered > 0 ? rate(prev.bookings, prev.offered) : 0;
+        const pShow = prev && (prev.shows + prev.no_shows) > 0 ? rate(prev.shows, prev.shows + prev.no_shows) : 0;
+        const pAvg = prev && prev.total > 0 ? prev.msg_sum / prev.total : 0;
+        const pCacheR = prevCost && (prevCost.inTok + prevCost.cacheRead) > 0 ? rate(prevCost.cacheRead, prevCost.inTok + prevCost.cacheRead) : 0;
+        const pBotR = prev && (prevBot + prev.total) > 0 ? rate(prevBot, prevBot + prev.total) : 0;
+
+        const kpis = {
+            conversations:   { value: cur.total, sub: `${cur.engaged} engaged`, delta: pctDelta(cur.total, prev && prev.total), unit: 'count' },
+            engagementRate:  { value: round1(curEng), sub: `${cur.engaged} of ${cur.total} reached 3+ msgs`, delta: ppDelta(curEng, pEng), unit: 'pct' },
+            leadRate:        { value: round1(curLead), sub: `${cur.leads} shared contact`, delta: ppDelta(curLead, pLead), unit: 'pct' },
+            bookings:        { value: cur.bookings, sub: `${cur.offered} offered`, delta: pctDelta(cur.bookings, prev && prev.bookings), unit: 'count' },
+            offerToBookRate: { value: round1(curOffer), sub: `${cur.bookings} of ${cur.offered} offers booked`, delta: ppDelta(curOffer, pOffer), unit: 'pct' },
+            showRate:        { value: round1(curShow), sub: `${cur.shows} show · ${cur.no_shows} no-show · ${cur.pending} pending`, delta: ppDelta(curShow, pShow), unit: 'pct' },
+            llmCost:         { value: Math.round(curCost.cost * 100) / 100, prefix: '$', sub: `${fmtTok(curCost.inTok)} in / ${fmtTok(curCost.outTok)} out`, delta: pctDelta(curCost.cost, prevCost && prevCost.cost), unit: 'count' },
+            cacheHitRate:    { value: round1(curCacheR), sub: 'prompt-cache reads', delta: ppDelta(curCacheR, pCacheR), unit: 'pct' },
+            avgMessages:     { value: round1(curAvg), sub: 'messages per conversation', delta: pctDelta(curAvg, pAvg), unit: 'count' },
+            botBlockRate:    { value: round1(curBotR), sub: `${curBot} blocked`, delta: ppDelta(curBotR, pBotR), unit: 'pct' }
+        };
+
+        res.json({ range, hasPrev: r.hasPrev, kpis });
+    } catch (error) {
+        console.error('Error getting overview:', error.message);
+        res.status(500).json({ error: 'Failed to get overview' });
+    }
+});
+
+/**
  * GET /api/admin/agent
  * Agent-quality observability: guardrail trips, tool behavior, learning loop, cost/latency.
  */
