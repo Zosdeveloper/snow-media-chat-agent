@@ -84,6 +84,78 @@ class SnowMediaAIChatAgent {
         }
     }
 
+    isValidEmail(email) {
+        return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    }
+
+    // Booking entry point fired by the "Book a Call" button. If we already have a
+    // usable email, open Calendly straight away (no friction on the high-intent
+    // path). Otherwise capture the email inline first so a visitor who opens
+    // Calendly and abandons it still leaves a follow-up-able lead.
+    requestBooking() {
+        if (this.isValidEmail(this.leadData.email)) {
+            this.openCalendly();
+            return;
+        }
+        this.showEmailGate();
+    }
+
+    showEmailGate() {
+        if (document.getElementById('snow-email-gate')) {
+            document.querySelector('#snow-email-gate .snow-gate-input')?.focus();
+            return;
+        }
+        this.clearQuickReplies();
+        const wrap = document.createElement('div');
+        wrap.className = 'message bot';
+        wrap.id = 'snow-email-gate';
+        wrap.innerHTML = `
+            <div class="message-content">
+                One quick thing before I open the calendar, what's the best email for the invite? The team will look over your setup before we talk.
+                <div class="snow-gate-form" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                    <input type="email" class="snow-gate-input" placeholder="you@company.com" autocomplete="email" inputmode="email"
+                        style="width:100%;padding:11px 14px;border:1px solid #d4e3f0;border-radius:12px;font-size:16px;color:#263B80;outline:none;background:#fff;">
+                    <button type="button" class="snow-gate-btn"
+                        style="padding:11px 18px;background:linear-gradient(135deg,#10b981,#059669);border:none;border-radius:9999px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Open calendar</button>
+                    <div class="snow-gate-err" style="display:none;color:#dc2626;font-size:12px;">That email doesn't look right, mind checking it?</div>
+                    <button type="button" class="snow-gate-skip"
+                        style="background:none;border:none;color:#64748b;font-size:12px;text-decoration:underline;cursor:pointer;padding:2px 0;align-self:flex-start;">Skip, just open the calendar</button>
+                </div>
+            </div>
+            <div class="message-time">${this.getTimeString()}</div>`;
+        this.chatMessages.appendChild(wrap);
+        this.scrollToBottom();
+
+        const input = wrap.querySelector('.snow-gate-input');
+        const submit = () => this.submitEmailGate(wrap);
+        wrap.querySelector('.snow-gate-btn').addEventListener('click', (e) => { e.preventDefault(); submit(); });
+        wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.dismissGate(wrap); this.openCalendly(); });
+        input.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+        setTimeout(() => input.focus(), 50);
+    }
+
+    submitEmailGate(wrap) {
+        const input = wrap.querySelector('.snow-gate-input');
+        const err = wrap.querySelector('.snow-gate-err');
+        const email = (input.value || '').trim();
+        if (!this.isValidEmail(email)) {
+            err.style.display = 'block';
+            input.focus();
+            return;
+        }
+        this.leadData.email = email;
+        this.onLeadDataUpdate(this.leadData);
+        // Persist immediately so the lead survives a Calendly abandon.
+        this.submitLead();
+        this.dismissGate(wrap);
+        this.addMessage("Perfect. Opening the calendar now, grab whatever time works.", 'bot');
+        this.openCalendly();
+    }
+
+    dismissGate(wrap) {
+        wrap.querySelector('.snow-gate-form')?.remove();
+    }
+
     // High-entropy, unguessable ids. The server treats both as bearer
     // capabilities, so randomUUID (122 bits) is the floor; the Math.random
     // branch is only a fallback for very old browsers.
@@ -402,7 +474,7 @@ class SnowMediaAIChatAgent {
         // Convert [BOOK_CALL] to booking button
         let processed = escaped.replace(
             /\[BOOK_CALL\]/g,
-            '<button class="book-call-btn" onclick="window.snowMediaChat.openCalendly()">📅 Book a Call</button>'
+            '<button class="book-call-btn" onclick="window.snowMediaChat.requestBooking()">📅 Book a Call</button>'
         );
 
         // Convert URLs to links (on escaped text)

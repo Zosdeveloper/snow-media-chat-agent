@@ -319,6 +319,56 @@
             -webkit-tap-highlight-color: transparent !important;
         }
 
+        /* Email gate (shown before opening Calendly when we have no email) */
+        #snow-chat-widget .snow-gate-form {
+            margin-top: 12px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+        }
+        #snow-chat-widget .snow-gate-input {
+            width: 100% !important;
+            padding: 11px 14px !important;
+            border: 1px solid #d4e3f0 !important;
+            border-radius: 12px !important;
+            font-size: 16px !important;
+            font-weight: 500 !important;
+            color: #263B80 !important;
+            outline: none !important;
+            background: white !important;
+            -webkit-appearance: none !important;
+            appearance: none !important;
+        }
+        #snow-chat-widget .snow-gate-input:focus { border-color: #263B80 !important; }
+        #snow-chat-widget .snow-gate-input::placeholder { color: #94a3b8 !important; }
+        #snow-chat-widget .snow-gate-btn {
+            padding: 11px 18px !important;
+            background: linear-gradient(135deg, #10b981, #059669) !important;
+            border: none !important;
+            border-radius: 9999px !important;
+            color: white !important;
+            font-size: 14px !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            -webkit-tap-highlight-color: transparent !important;
+        }
+        #snow-chat-widget .snow-gate-btn:active { transform: scale(0.97) !important; }
+        #snow-chat-widget .snow-gate-err {
+            color: #dc2626 !important;
+            font-size: 12px !important;
+        }
+        #snow-chat-widget .snow-gate-skip {
+            background: none !important;
+            border: none !important;
+            color: #64748b !important;
+            font-size: 12px !important;
+            text-decoration: underline !important;
+            cursor: pointer !important;
+            padding: 2px 0 !important;
+            align-self: flex-start !important;
+            -webkit-tap-highlight-color: transparent !important;
+        }
+
         /* Input */
         #snow-chat-widget .snow-input-container {
             padding: 16px 20px !important;
@@ -724,7 +774,7 @@
 
         formatText(text) {
             let t = this.escapeHtml(text);
-            t = t.replace(/\[BOOK_CALL\]/g, '<button class="snow-book-btn" onclick="window.SnowChat.openCalendly()">📅 Book a Call</button>');
+            t = t.replace(/\[BOOK_CALL\]/g, '<button class="snow-book-btn" onclick="window.SnowChat.requestBooking()">📅 Book a Call</button>');
             t = t.replace(/(https?:\/\/[^\s&]+)/g, '<a href="$1" target="_blank">$1</a>');
             t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             return t.replace(/\n/g, '<br>');
@@ -790,6 +840,75 @@
                 url: CONFIG.calendlyUrl,
                 prefill: { name: this.leadData.name || '', email: this.leadData.email || '' }
             }) : window.open(CONFIG.calendlyUrl, '_blank');
+        }
+
+        isValidEmail(email) {
+            return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+        }
+
+        // Booking entry point fired by the "Book a Call" button. If we already
+        // have a usable email, open Calendly straight away (no friction on the
+        // high-intent path). Otherwise capture the email inline first so a
+        // visitor who opens Calendly and abandons it still leaves a
+        // follow-up-able lead instead of vanishing.
+        requestBooking() {
+            if (this.isValidEmail(this.leadData.email)) {
+                this.openCalendly();
+                return;
+            }
+            this.showEmailGate();
+        }
+
+        showEmailGate() {
+            const existing = this.messages.querySelector('.snow-gate');
+            if (existing) {
+                existing.querySelector('.snow-gate-input')?.focus();
+                return;
+            }
+            this.clearReplies();
+            const wrap = document.createElement('div');
+            wrap.className = 'snow-message bot snow-gate';
+            wrap.innerHTML = `
+                <div class="snow-message-content">
+                    One quick thing before I open the calendar, what's the best email for the invite? The team will look over your setup before we talk.
+                    <div class="snow-gate-form">
+                        <input type="email" class="snow-gate-input" placeholder="you@company.com" autocomplete="email" inputmode="email">
+                        <button type="button" class="snow-gate-btn">Open calendar</button>
+                        <div class="snow-gate-err" style="display:none;">That email doesn't look right, mind checking it?</div>
+                        <button type="button" class="snow-gate-skip">Skip, just open the calendar</button>
+                    </div>
+                </div>`;
+            this.messages.appendChild(wrap);
+            this.scrollToBottom();
+
+            const input = wrap.querySelector('.snow-gate-input');
+            const submit = () => this.submitEmailGate(wrap);
+            wrap.querySelector('.snow-gate-btn').addEventListener('click', (e) => { e.preventDefault(); submit(); });
+            wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.dismissGate(wrap); this.openCalendly(); });
+            input.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+            setTimeout(() => input.focus(), 50);
+        }
+
+        submitEmailGate(wrap) {
+            const input = wrap.querySelector('.snow-gate-input');
+            const err = wrap.querySelector('.snow-gate-err');
+            const email = (input.value || '').trim();
+            if (!this.isValidEmail(email)) {
+                err.style.display = 'block';
+                input.focus();
+                return;
+            }
+            this.leadData.email = email;
+            this.saveLeadData();
+            // Persist immediately so the lead survives a Calendly abandon.
+            this.submitLead();
+            this.dismissGate(wrap);
+            this.addMessage("Perfect. Opening the calendar now, grab whatever time works.", 'bot');
+            this.openCalendly();
+        }
+
+        dismissGate(wrap) {
+            wrap.querySelector('.snow-gate-form')?.remove();
         }
 
         async submitLead() {

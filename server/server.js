@@ -880,21 +880,58 @@ app.post('/api/leads', chatLimiter, async (req, res) => {
     try {
         const { sessionId, leadData, conversationHistory } = req.body;
 
+        if (!sessionId || !leadData || typeof leadData !== 'object') {
+            return res.status(400).json({ error: 'sessionId and leadData required' });
+        }
+
+        const rawEmail = typeof leadData.email === 'string' ? leadData.email.trim() : '';
+        const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
+
         // Log lead event without PII
         console.log('New Lead:', {
             timestamp: new Date().toISOString(),
             sessionId,
-            hasName: !!leadData?.name,
-            hasEmail: !!leadData?.email,
-            hasPhone: !!leadData?.phone,
+            hasName: !!leadData.name,
+            hasEmail: emailValid,
+            hasPhone: !!leadData.phone,
             messageCount: conversationHistory?.length || 0
         });
 
-        // Here you would typically:
-        // 1. Save to database
-        // 2. Send to CRM (HubSpot, Salesforce, etc.)
-        // 3. Send notification email
-        // 4. Trigger webhook
+        // Build a partial update carrying only fields we actually have. Never
+        // persist a junk email (defense in depth; the widget validates too).
+        // upsertConversation only writes defined fields, so this won't wipe a
+        // name captured earlier in the conversation.
+        const update = {};
+        if (leadData.name) update.name = leadData.name;
+        if (leadData.phone) update.phone = leadData.phone;
+        if (leadData.businessType || leadData.business) update.businessType = leadData.businessType || leadData.business;
+        if (emailValid) update.email = rawEmail;
+
+        // Merge into the live in-memory session so an in-flight conversation
+        // also sees the captured email on its next turn.
+        const session = sessions.get(sessionId);
+        if (session) {
+            session.leadData = { ...session.leadData, ...update };
+        }
+
+        // Durably persist to the conversation row. This is the whole point of the
+        // email-gate: a captured email here makes the lead a follow-up candidate
+        // (db.getFollowUpCandidates) even if the visitor opens Calendly and
+        // abandons it without booking.
+        try {
+            db.updateConversationLeadData(sessionId, update);
+        } catch (err) {
+            console.error('Lead persist error:', err.message);
+            alerts.databaseError(err, { sessionId, op: 'updateConversationLeadData' });
+        }
+
+        // Signal: email captured at the booking gate. Pair against
+        // booking_offered_no_email to measure how much of that leak we recover.
+        if (emailValid) {
+            try {
+                db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'email_captured_at_booking' });
+            } catch (_e) {}
+        }
 
         res.json({ success: true, message: 'Lead captured successfully' });
 
