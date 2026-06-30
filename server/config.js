@@ -45,13 +45,17 @@ const config = {
 
     // RAG settings
     // Two-lane retrieval: conversation patterns (style) and knowledge facts (grounding).
-    // Different thresholds because facts are short snippets and score lower on cosine
-    // than multi-turn dialogue patterns.
+    // TRUE cosine thresholds (see db.searchSimilarPatterns). Calibrated against real
+    // visitor queries: strong topical matches land 0.55-0.59, moderate relevance
+    // 0.45-0.53, pure noise tops out ~0.36. Facts a touch more permissive than
+    // patterns because injecting a slightly-off grounding fact is lower-risk than a
+    // wrong conversation-style example. (Pre-fix these were 0.6/0.5 on a broken
+    // 1-L2 scale that required near-duplicate text, so grounding rarely fired.)
     rag: {
         maxPatterns: 2,           // Conversation examples to retrieve
         maxFacts: 2,              // Knowledge facts (case studies, services, FAQs)
-        similarityThreshold: 0.6, // Pattern minimum similarity
-        factsSimilarityThreshold: 0.5, // Facts minimum similarity (more permissive)
+        similarityThreshold: 0.5,  // Pattern minimum cosine similarity
+        factsSimilarityThreshold: 0.45, // Facts minimum cosine similarity (more permissive)
         maxExampleMessages: 6,    // Max messages per conversation example
     },
 

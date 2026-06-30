@@ -808,7 +808,13 @@ function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6, l
             .filter(r => r.status === 'active' && laneMatches(r))
             .map(r => ({
                 ...r,
-                similarity: 1 - r.distance,
+                // vec_patterns uses the default L2 distance, and Voyage embeddings are
+                // unit-normalized, so true cosine similarity = 1 - L2^2/2. The old
+                // `1 - distance` was NOT cosine: it compressed the scale so a strong
+                // topical match (cosine ~0.6) reported ~0.18, sitting far below the
+                // thresholds, so grounding facts almost never retrieved. This is the
+                // real cosine now; thresholds in config.rag are set on this scale.
+                similarity: 1 - (r.distance * r.distance) / 2,
                 messages: JSON.parse(r.messages_json)
             }))
             .filter(r => r.similarity >= minSimilarity)
