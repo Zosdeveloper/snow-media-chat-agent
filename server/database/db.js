@@ -761,16 +761,23 @@ function searchSimilarPatterns(queryEmbedding, limit = 3, minSimilarity = 0.6, l
         // Fetch more than limit from vec index; lane filtering happens in the app
         // (vec MATCH doesn't compose with WHERE clauses on the joined table).
         const fetchLimit = Math.max(limit * 4, 15);
+        // sqlite-vec requires the knn scan to carry its own k constraint. When the
+        // vec0 table is JOINed, a trailing LIMIT applies to the joined rows, not the
+        // knn, and vec0 errors ("a LIMIT or 'k = ?' constraint is required"). Do the
+        // knn in a CTE with an explicit `k = ?`, then join the metadata.
         const results = db.prepare(`
+            WITH knn AS (
+                SELECT pattern_id, distance
+                FROM vec_patterns
+                WHERE embedding MATCH ? AND k = ?
+            )
             SELECT
-                vp.pattern_id,
-                vp.distance,
+                knn.pattern_id,
+                knn.distance,
                 sp.*
-            FROM vec_patterns vp
-            JOIN successful_patterns sp ON sp.id = vp.pattern_id
-            WHERE vp.embedding MATCH ?
-            ORDER BY vp.distance ASC
-            LIMIT ?
+            FROM knn
+            JOIN successful_patterns sp ON sp.id = knn.pattern_id
+            ORDER BY knn.distance ASC
         `).all(embeddingStr, fetchLimit);
 
         const laneMatches = (r) => {
