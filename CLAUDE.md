@@ -12,7 +12,7 @@ AI-powered sales chat widget for The Snow Media marketing agency. The chat agent
 - **Database**: SQLite (better-sqlite3) with sqlite-vec extension for vector search
 - **AI**: Claude API (claude-sonnet-4-6) for conversations
 - **Embeddings**: Voyage AI (voyage-3-lite, 512 dimensions) for RAG similarity search
-- **Deployment**: Railway (auto-deploy from GitHub `main`)
+- **Deployment**: Railway (auto-deploy from GitHub `master`)
 
 ## Commands
 
@@ -114,7 +114,7 @@ In-memory `Map` in `server.js`. Sessions expire after 1 hour (marked `abandoned`
 
 ## Deployment
 
-Railway auto-deploys from `main`. Admin dashboard at the Railway URL + `/admin.html`.
+Railway auto-deploys from `master`. Admin dashboard at the Railway URL + `/admin.html`.
 
 Database persisted at `./data/chat.db` on Railway persistent volume.
 
