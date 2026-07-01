@@ -3,9 +3,21 @@ _Synthesized 2026-04-23. Progress log kept in sync with commits on master._
 
 ## Current status
 
-_Last updated 2026-06-30. The 2026-04-23 batches (below) plus a follow-on performance and correctness pass are all live on master. Railway auto-deploys from master, so everything here is in production._
+_Last updated 2026-07-01. The 2026-04-23 batches (below) plus follow-on performance/correctness passes and a live human takeover feature are all live on master. Railway auto-deploys from master, so everything here is in production._
 
-**Production tip: `9717093` (master == dev, in sync).**
+**Production tip: `190c2d9` (master == dev, in sync).**
+
+**2026-07-01 session shipped (newest first):**
+- `190c2d9` Re-synced the stale root widget copies (`chat-agent-ai.js`, `embed-ai.js`) to be byte-identical to `server/public`. They had drifted a full feature behind (missing the email gate, stale localhost endpoints) but are still loaded by dev test pages (`product-landing-v3.html`, `embed-test.html`), so re-synced rather than deleted.
+- `9fac928` Doc fix: corrected the deploy-branch references in `CLAUDE.md` from `main` to `master` (the actual default/deploy branch; there is no `main`).
+- `3a437d2` **Live human takeover.** An operator steps into a live conversation from their phone and replies as "Milos" while the AI goes silent. Strictly additive: if nobody takes over, visitor behavior is byte-for-byte unchanged. Pieces:
+  - `takeover_mode` on conversations (`ai | requested | human`; only `human` silences the AI) + `sender_type` on messages (`operator | system`). Migration `add_takeover_mode`.
+  - Poll transport: widget polls `GET /api/chat/:id/poll?since=<cursor>` every 5s while open; the chat POST returns the assistant message id as the cursor. Operator messages render seamlessly as Milos (no "a human joined" banner; the AI/human distinction lives only in the console).
+  - Admin endpoints: `GET /api/admin/live-queue`, `POST .../takeover`, `.../release`, `.../operator-message`. Shared `server/sessionStore.js` Map so takeover/release invalidate the in-memory session and the AI rebuilds full context (including operator turns) from the DB on resume.
+  - Mobile operator console at `/live.html` (admin-key auth, live queue, transcript, take over/release, reply + canned snippets, `?c=` deep link, PWA installable). Served from `server/public` like `admin.html`.
+  - Silence fallback: a 30s sweep hands control back to the AI with a graceful bridge message if an operator takes over then goes quiet for 90s (`config.takeover.operatorSilenceMs`), so no visitor is stranded.
+  - Discord handoff pings deep-link to `/live.html?c=<sessionId>` when `PUBLIC_URL` is set. Notifications stay on Discord (already on the phone); no native web push built.
+  - Verified: DB layer + sweep query via a throwaway-DB script; full HTTP round-trip (takeover silences the AI, operator message delivered via poll, release restores AI mode, admin auth enforced).
 
 **2026-06-30 session shipped (newest first):**
 - `9717093` RAG similarity metric fix. The code reported `1 - L2distance` as similarity, which is not cosine. vec_patterns uses L2 distance and Voyage embeddings are unit-normalized, so a strong topical match (true cosine ~0.6) reported ~0.18, far below the thresholds. The facts lane was effectively dead, so the agent could never cite a retrieved case study (hard rule #4 only allows citing from retrieved context). Now true cosine (`1 - d^2/2`) with thresholds recalibrated on the real scale (facts 0.45, patterns 0.5). Sales battery 6.8 to 7.2, earned bookings 10 to 14 of 17. Biggest single craft lift measured.
@@ -75,6 +87,8 @@ _Last updated 2026-06-30. The 2026-04-23 batches (below) plus a follow-on perfor
 
 2. **Set the `sendgrid` key / other env** when the follow-up email system starts building. Not blocking yet.
 
+3. **`PUBLIC_URL` set in Railway (DONE 2026-07-01).** Required so Discord handoff alerts include the `/live.html?c=...` deep link. Set to `https://snow-media-chat-agent-production.up.railway.app` (no trailing slash). Live takeover works without it; you just lose the tap-through link. Console installed to the owner's phone home screen as a PWA.
+
 ---
 
 ## Recommended next steps
@@ -118,6 +132,7 @@ Priority order, reassessed 2026-06-30 after the performance pass. Each item is s
 ### Deprioritized
 - **P3-4 A/B test the fit-check.** Moot since fit-check is soft.
 - **Admin review queue for quarantined patterns.** Decided against per owner.
+- **Native web push for the live-takeover console.** Skipped by design (owner confirmed 2026-07-01). Discord already delivers phone notifications and the deep link opens the console. Revisit only to drop Discord from the loop. An SSE/WebSocket upgrade of the widget poll and multi-operator assignment are likewise out of scope until volume warrants.
 
 ---
 
@@ -143,7 +158,7 @@ Priority order, reassessed 2026-06-30 after the performance pass. Each item is s
 
 ## How to resume
 
-Everything through `9717093` is committed and live on master. `dev` and `master` are in sync, working tree clean. This file plus the commit messages since `ca27251` are the full record, and the per-project Claude memory (`project_chat_agent_perf.md`) carries the working detail. Safe to clear the session.
+Everything through `190c2d9` is committed and live on master. `dev` and `master` are in sync, working tree clean. This file plus the commit messages since `ca27251` are the full record, and the per-project Claude memory (`project_chat_agent_perf.md`) carries the working detail. Safe to clear the session.
 
 Next session should:
 1. Pull the 2-week funnel-signal read (N-1) before building anything, it sizes the rest.
