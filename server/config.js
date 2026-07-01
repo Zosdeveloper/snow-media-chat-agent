@@ -9,6 +9,11 @@ const config = {
     port: process.env.PORT || 3000,
     nodeEnv: process.env.NODE_ENV || 'development',
 
+    // Public base URL of the deployed app (e.g. the Railway URL). Used to build
+    // the deep link into the live-takeover console that ships in Discord handoff
+    // alerts. Null in dev / when unset, in which case the link is simply omitted.
+    publicBaseUrl: process.env.PUBLIC_URL || null,
+
     // Database
     databasePath: process.env.DATABASE_PATH || './data/chat.db',
 
@@ -77,6 +82,14 @@ const config = {
         maxAge: 60 * 60 * 1000,        // 1 hour
         cleanupInterval: 15 * 60 * 1000, // 15 minutes
         maxMessages: 20,                 // Keep last 20 messages
+    },
+
+    // Live human takeover settings
+    takeover: {
+        pollIntervalMs: 5000,           // widget poll cadence while the chat is open
+        operatorSilenceMs: 90 * 1000,   // human mode: visitor-wait silence before AI auto-resumes
+        sweepIntervalMs: 30 * 1000,     // how often the silence-fallback sweep runs
+        queueSinceHours: 12,            // how far back the operator queue looks for handoff signals
     },
 
     // Email follow-up settings

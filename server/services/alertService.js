@@ -140,6 +140,11 @@ function formatFields(details) {
     if (details.reason) {
         fields.push({ name: 'Reason', value: details.reason, inline: true });
     }
+    if (details.link) {
+        // Deep link into the live-takeover console. Tap from the phone to jump
+        // straight into this conversation.
+        fields.push({ name: 'Take over', value: details.link, inline: false });
+    }
     if (details.stack && process.env.NODE_ENV === 'development') {
         fields.push({ name: 'Stack', value: '```' + truncate(details.stack, 500) + '```', inline: false });
     }

@@ -562,6 +562,17 @@
             this.leadSubmitted = false;
             this.historyRestored = false;
 
+            // Live human takeover: poll state. lastSeenId is the cursor into the
+            // server's message ids; the poll only surfaces out-of-band assistant
+            // messages (operator replies / fallback bridge) newer than it.
+            this.takeoverMode = 'ai';
+            this.lastSeenId = 0;
+            this.renderedIds = new Set();
+            this.pollTimer = null;
+            this.pollIntervalMs = 5000;
+            this._pollReady = false;
+            this._pollPrimed = false;
+
             this.bindEvents();
             // Only auto-open if user hasn't manually closed before
             if (CONFIG.autoOpen && localStorage.getItem('sm_chat_closed') !== 'true') {
@@ -669,10 +680,13 @@
                 } else if (!this.history.length) {
                     this.startConversation();
                 }
+
+                this.startPolling();
             } else {
                 // Close chat
                 this.container.classList.remove('open');
                 this.toggle.classList.remove('open');
+                this.stopPolling();
 
                 // User manually closed - remember this to prevent auto-reopen
                 localStorage.setItem('sm_chat_closed', 'true');
@@ -748,6 +762,25 @@
                     this.leadData = { ...this.leadData, ...data.leadData };
                     this.saveLeadData();
                 }
+
+                this.takeoverMode = data.mode || 'ai';
+
+                // Human operator has taken over: the server sent no AI message. Don't
+                // render a bot bubble; the operator's reply arrives via the poll loop
+                // and simply appears (seamless, still "Milos" to the visitor).
+                if (data.mode === 'human' || !data.message) {
+                    this.hideTyping();
+                    this.startPolling();
+                    this.isTyping = false;
+                    return;
+                }
+
+                // Advance the poll cursor so the poll loop never re-renders this reply.
+                if (data.messageId) {
+                    this.lastSeenId = Math.max(this.lastSeenId, data.messageId);
+                    this.renderedIds.add(data.messageId);
+                }
+
                 await this.delay(Math.min(1000 + data.message.length * 20, 3000));
                 this.hideTyping();
                 this.addMessage(data.message, 'bot');
@@ -759,6 +792,56 @@
                 this.addMessage("Something went wrong. Please try again or visit thesnowmedia.com", 'bot');
             }
             this.isTyping = false;
+        }
+
+        // ---- Live human takeover polling ----
+
+        // Prime the cursor to the current latest message id without rendering, so
+        // the poll loop only surfaces genuinely new out-of-band messages and never
+        // re-dumps history alongside the localStorage restore.
+        async primePollCursor() {
+            try {
+                const res = await fetch(`${CONFIG.apiUrl}/${encodeURIComponent(this.sessionId)}/poll?since=0`);
+                if (res.ok) {
+                    const data = await res.json();
+                    this.takeoverMode = data.mode || 'ai';
+                    if (Array.isArray(data.messages)) {
+                        for (const m of data.messages) if (m.id > this.lastSeenId) this.lastSeenId = m.id;
+                    }
+                }
+            } catch (_e) { /* best-effort */ }
+            this._pollReady = true;
+        }
+
+        startPolling() {
+            if (!this._pollPrimed) {
+                this._pollPrimed = true;
+                this.primePollCursor();
+            }
+            if (this.pollTimer) return;
+            this.pollTimer = setInterval(() => this.pollOnce(), this.pollIntervalMs);
+        }
+
+        stopPolling() {
+            if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+        }
+
+        async pollOnce() {
+            if (!this.isOpen || document.hidden || !this._pollReady) return;
+            try {
+                const res = await fetch(`${CONFIG.apiUrl}/${encodeURIComponent(this.sessionId)}/poll?since=${this.lastSeenId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                this.takeoverMode = data.mode || 'ai';
+                if (!Array.isArray(data.messages)) return;
+                for (const m of data.messages) {
+                    if (m.id > this.lastSeenId) this.lastSeenId = m.id;
+                    if (this.renderedIds.has(m.id)) continue;
+                    this.renderedIds.add(m.id);
+                    this.hideTyping();
+                    this.addMessage(m.content, 'bot');
+                }
+            } catch (_e) { /* best-effort */ }
         }
 
         addMessage(text, sender) {

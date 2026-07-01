@@ -40,6 +40,17 @@ class SnowMediaAIChatAgent {
         this.messageHistory = [];
         this.pendingMessage = null;
 
+        // Live human takeover: poll state. lastSeenId is the cursor into the
+        // server's message ids; the poll only ever surfaces out-of-band assistant
+        // messages (operator replies / fallback bridge) newer than it.
+        this.takeoverMode = 'ai';
+        this.lastSeenId = 0;
+        this.renderedIds = new Set();
+        this.pollTimer = null;
+        this.pollIntervalMs = this.config.pollIntervalMs || 5000;
+        this._pollReady = false;
+        this._pollPrimed = false;
+
         // Capture page context, UTM params, and persistent visitor ID
         this.pageContext = this.capturePageContext();
         this.utmParams = this.captureUtmParams();
@@ -323,6 +334,9 @@ class SnowMediaAIChatAgent {
             if (this.messageHistory.length === 0) {
                 this.startConversation();
             }
+            this.startPolling();
+        } else {
+            this.stopPolling();
         }
     }
 
@@ -398,6 +412,24 @@ class SnowMediaAIChatAgent {
                 this.onLeadDataUpdate(this.leadData);
             }
 
+            this.takeoverMode = data.mode || 'ai';
+
+            // A human operator has taken over: the server returned no AI message.
+            // Don't render a bot bubble; the operator's reply arrives via the poll
+            // loop and simply appears (seamless, still "Milos" to the visitor).
+            if (data.mode === 'human' || !data.message) {
+                this.hideTypingIndicator();
+                this.startPolling();
+                this.isTyping = false;
+                return;
+            }
+
+            // Advance the poll cursor so the poll loop never re-renders this AI reply.
+            if (data.messageId) {
+                this.lastSeenId = Math.max(this.lastSeenId, data.messageId);
+                this.renderedIds.add(data.messageId);
+            }
+
             // Simulate natural typing delay (1.5-3s, scaled by length)
             // Short replies (under 80 chars): 1.5s. Longer: up to 3s
             const baseDelay = 1500;
@@ -434,6 +466,63 @@ class SnowMediaAIChatAgent {
         }
 
         this.isTyping = false;
+    }
+
+    // ---- Live human takeover polling ----
+
+    // Prime the cursor to the current latest message id without rendering, so the
+    // poll loop only surfaces genuinely new out-of-band messages and never dumps
+    // history after a page reload (this widget does not replay history visually).
+    async primePollCursor() {
+        try {
+            const url = `${this.config.apiEndpoint}/${encodeURIComponent(this.sessionId)}/poll?since=0`;
+            const res = await fetch(url);
+            if (res.ok) {
+                const data = await res.json();
+                this.takeoverMode = data.mode || 'ai';
+                if (Array.isArray(data.messages)) {
+                    for (const m of data.messages) {
+                        if (m.id > this.lastSeenId) this.lastSeenId = m.id;
+                    }
+                }
+            }
+        } catch (_e) { /* best-effort */ }
+        this._pollReady = true;
+    }
+
+    startPolling() {
+        if (!this._pollPrimed) {
+            this._pollPrimed = true;
+            this.primePollCursor();
+        }
+        if (this.pollTimer) return;
+        this.pollTimer = setInterval(() => this.pollOnce(), this.pollIntervalMs);
+    }
+
+    stopPolling() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+    }
+
+    async pollOnce() {
+        if (!this.isOpen || document.hidden || !this._pollReady) return;
+        try {
+            const url = `${this.config.apiEndpoint}/${encodeURIComponent(this.sessionId)}/poll?since=${this.lastSeenId}`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+            this.takeoverMode = data.mode || 'ai';
+            if (!Array.isArray(data.messages)) return;
+            for (const m of data.messages) {
+                if (m.id > this.lastSeenId) this.lastSeenId = m.id;
+                if (this.renderedIds.has(m.id)) continue;
+                this.renderedIds.add(m.id);
+                this.hideTypingIndicator();
+                this.addMessage(m.content, 'bot');
+            }
+        } catch (_e) { /* best-effort */ }
     }
 
     addMessage(text, sender) {

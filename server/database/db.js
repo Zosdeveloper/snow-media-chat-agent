@@ -302,6 +302,29 @@ async function initialize() {
         console.log('Signal/outcome migration note:', err.message);
     }
 
+    // Migration: live human takeover. takeover_mode on conversations drives whether
+    // the AI answers (ai/requested) or stays silent while a human replies (human).
+    // sender_type on messages flags human ('operator') and fallback-bridge ('system')
+    // turns so both the widget and the admin transcript can tell them apart.
+    try {
+        const alreadyRun = db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_takeover_mode'").get();
+        if (!alreadyRun) {
+            const convCols = db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name);
+            if (!convCols.includes('takeover_mode')) {
+                db.exec("ALTER TABLE conversations ADD COLUMN takeover_mode TEXT DEFAULT 'ai'");
+            }
+            const msgCols = db.prepare("PRAGMA table_info(messages)").all().map(c => c.name);
+            if (!msgCols.includes('sender_type')) {
+                db.exec("ALTER TABLE messages ADD COLUMN sender_type TEXT");
+            }
+            db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_takeover_mode ON conversations(takeover_mode)");
+            db.prepare("INSERT INTO _migrations (name) VALUES ('add_takeover_mode')").run();
+            console.log('Added takeover_mode column + messages.sender_type (live takeover)');
+        }
+    } catch (err) {
+        console.log('Takeover mode migration note:', err.message);
+    }
+
     // Create virtual table for vector search if extension loaded
     if (vecLoaded) {
         try {
@@ -607,7 +630,7 @@ function addMessage(conversationId, role, content, embedding = null, quickReplie
 function getMessages(conversationId, limit = 100) {
     const db = getDb();
     return db.prepare(`
-        SELECT id, conversation_id, role, content, created_at, quick_replies
+        SELECT id, conversation_id, role, content, created_at, quick_replies, sender_type
         FROM messages
         WHERE conversation_id = ?
         ORDER BY created_at ASC
@@ -624,6 +647,122 @@ function getConversationWithMessages(sessionId) {
 
     const messages = getMessages(sessionId);
     return { ...conversation, messages };
+}
+
+// ============================================
+// LIVE HUMAN TAKEOVER
+// ============================================
+
+const TAKEOVER_MODES = ['ai', 'requested', 'human'];
+
+/**
+ * Set the takeover mode for a conversation.
+ *   ai        = normal, AI answers
+ *   requested = flagged for a human (queue + Discord), AI still answers
+ *   human     = human has taken over, AI stays silent
+ * No-op (with a warning) on an invalid mode so a bad caller can't corrupt state.
+ */
+function setTakeoverMode(conversationId, mode) {
+    if (!TAKEOVER_MODES.includes(mode)) {
+        console.warn('[db.setTakeoverMode] invalid mode:', mode);
+        return;
+    }
+    // Ensure the row exists so a takeover on a not-yet-persisted session still sticks.
+    upsertConversation(conversationId);
+    getDb().prepare("UPDATE conversations SET takeover_mode = ? WHERE id = ?").run(mode, conversationId);
+}
+
+/**
+ * Read a conversation's takeover mode. Defaults to 'ai' for unknown/legacy rows
+ * so the chat flow is never accidentally silenced.
+ */
+function getTakeoverMode(conversationId) {
+    const row = getDb().prepare("SELECT takeover_mode FROM conversations WHERE id = ?").get(conversationId);
+    return (row && row.takeover_mode) || 'ai';
+}
+
+/**
+ * Insert a message written by a human operator (or the fallback bridge).
+ * Stored as role='assistant' so the AI keeps full context if it later resumes;
+ * sender_type distinguishes it ('operator' | 'system'). Returns the new row id.
+ */
+function addOperatorMessage(conversationId, content, senderType = 'operator') {
+    const db = getDb();
+    upsertConversation(conversationId);
+    const result = db.prepare(`
+        INSERT INTO messages (conversation_id, role, content, sender_type)
+        VALUES (?, 'assistant', ?, ?)
+    `).run(conversationId, content, senderType);
+    return result.lastInsertRowid;
+}
+
+/**
+ * Assistant-role messages newer than sinceId, for the widget's out-of-band poll.
+ * Only assistant rows are returned (operator replies + fallback bridge); the
+ * widget already rendered its own user turns and the AI reply from the POST call,
+ * so the sinceId cursor means it only ever picks up messages it hasn't seen.
+ */
+function getMessagesSince(conversationId, sinceId) {
+    return getDb().prepare(`
+        SELECT id, role, content, sender_type, created_at
+        FROM messages
+        WHERE conversation_id = ? AND id > ? AND role = 'assistant'
+        ORDER BY id ASC
+    `).all(conversationId, Number(sinceId) || 0);
+}
+
+/**
+ * Conversations stuck in human mode where the visitor is waiting: the most recent
+ * message is theirs (role='user') and it is older than silenceMs. Drives the
+ * silence fallback that hands control back to the AI so nobody is left in silence.
+ */
+function getStrandedHumanConversations(silenceMs) {
+    const cutoff = `-${Math.round(Number(silenceMs) / 1000)} seconds`;
+    return getDb().prepare(`
+        SELECT c.id
+        FROM conversations c
+        JOIN messages m ON m.id = (
+            SELECT id FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1
+        )
+        WHERE c.takeover_mode = 'human'
+          AND m.role = 'user'
+          AND m.created_at < datetime('now', ?)
+    `).all(cutoff);
+}
+
+/**
+ * The operator worklist: conversations either already flagged (requested/human) or
+ * that fired a handoff/hot_lead signal within the window. Includes the last user
+ * snippet and the most recent triggering signal label for context in the queue UI.
+ */
+function getLiveQueue({ sinceHours = 12 } = {}) {
+    const cutoff = `-${Math.round(Number(sinceHours))} hours`;
+    return getDb().prepare(`
+        SELECT
+            c.id,
+            c.lead_name,
+            c.lead_email,
+            c.lead_business_type,
+            c.takeover_mode,
+            c.message_count,
+            c.updated_at,
+            (SELECT content FROM messages
+                WHERE conversation_id = c.id AND role = 'user'
+                ORDER BY id DESC LIMIT 1) AS last_user,
+            (SELECT event_type || ':' || COALESCE(label, '') FROM signal_events
+                WHERE conversation_id = c.id AND event_type IN ('handoff', 'hot_lead')
+                ORDER BY id DESC LIMIT 1) AS last_signal
+        FROM conversations c
+        WHERE c.takeover_mode IN ('requested', 'human')
+           OR c.id IN (
+                SELECT conversation_id FROM signal_events
+                WHERE event_type IN ('handoff', 'hot_lead')
+                  AND conversation_id IS NOT NULL
+                  AND created_at >= datetime('now', ?)
+           )
+        ORDER BY c.updated_at DESC
+        LIMIT 50
+    `).all(cutoff);
 }
 
 // ============================================
@@ -1370,6 +1509,14 @@ module.exports = {
     addMessage,
     getMessages,
     getConversationWithMessages,
+
+    // Live human takeover
+    setTakeoverMode,
+    getTakeoverMode,
+    addOperatorMessage,
+    getMessagesSince,
+    getStrandedHumanConversations,
+    getLiveQueue,
 
     // Patterns
     createPattern,

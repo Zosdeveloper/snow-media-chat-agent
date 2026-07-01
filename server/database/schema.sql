@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     booking_confirmed INTEGER DEFAULT 0,              -- 1 when Calendly webhook fires
     booking_confirmed_at DATETIME,                    -- when the booking webhook was received
     booking_trigger_reason TEXT,                      -- why the model booked: explicit_request | qualification_complete | warm_visitor_shortcut
-    booking_event_id TEXT                             -- Calendly event uri, used for dedupe
+    booking_event_id TEXT,                            -- Calendly event uri, used for dedupe
+    takeover_mode TEXT DEFAULT 'ai'                   -- ai | requested | human (live human takeover). Also added by migration for existing DBs.
 );
 
 -- Messages table: stores all messages with embeddings
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     embedding BLOB,                                   -- float32 array stored as blob
     quick_replies TEXT,                               -- JSON array of quick reply options
+    sender_type TEXT,                                 -- null = normal user/AI; 'operator' = human takeover reply; 'system' = fallback bridge. Also added by migration.
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 

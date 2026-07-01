@@ -65,6 +65,17 @@ const chatLimiter = rateLimit({
     legacyHeaders: false
 });
 
+// The takeover poll runs on a short interval while the widget is open, so it needs
+// a roomier budget than the chat limiter (which counts actual messages). Kept on a
+// separate limiter so polling can't starve the message bucket or vice-versa.
+const pollLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 90,
+    message: { error: 'Too many requests.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 // Middleware
 app.use(cors(corsOptions));
 // Capture raw body on webhook paths so we can verify Calendly's signature.
@@ -95,8 +106,11 @@ const anthropic = new Anthropic({
     maxRetries: 2
 });
 
-// Store conversation sessions (in production, use Redis or database)
-const sessions = new Map();
+// Store conversation sessions (in production, use Redis or database).
+// Shared module so the admin takeover/release endpoints and the silence-fallback
+// sweep can invalidate a session, forcing a clean rebuild from the DB (which holds
+// the operator's turns) when the AI resumes. Same Map API as before.
+const sessions = require('./sessionStore');
 
 // Session cleanup (remove sessions older than 1 hour)
 setInterval(() => {
@@ -113,6 +127,26 @@ setInterval(() => {
         }
     }
 }, config.session.cleanupInterval); // Run every 15 minutes
+
+// Silence fallback for live takeover: if a conversation is in human mode and the
+// visitor's most recent message has gone unanswered longer than operatorSilenceMs,
+// hand control back to the AI with a graceful bridge message so nobody is stranded
+// in silence when the operator gets pulled away. The bridge reaches the widget via
+// its poll; mode is now 'ai' so the visitor's next message gets an AI reply again.
+const TAKEOVER_BRIDGE_TEXT = "Looks like the team just stepped away for a sec. I can keep helping right here, or leave your email and Milos will follow up within the hour.";
+setInterval(() => {
+    try {
+        const stranded = db.getStrandedHumanConversations(config.takeover.operatorSilenceMs);
+        for (const { id } of stranded) {
+            db.setTakeoverMode(id, 'ai');
+            db.addOperatorMessage(id, TAKEOVER_BRIDGE_TEXT, 'system');
+            sessions.delete(id); // force a clean rebuild from DB (incl. operator turns) on resume
+            console.log(`[TAKEOVER] silence fallback: resumed AI on ${id}`);
+        }
+    } catch (err) {
+        console.error('[TAKEOVER] sweep error:', err.message);
+    }
+}, config.takeover.sweepIntervalMs);
 
 // Client-supplied identifiers are treated as bearer capabilities: sessionId
 // resumes a conversation, visitorId pulls a returning visitor's saved contact
@@ -268,6 +302,29 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         } catch (err) {
             console.error('Error persisting user message:', err.message);
             alerts.databaseError(err, { sessionId, op: 'addMessage:user' });
+        }
+
+        // Live human takeover: if an operator has taken this conversation over, the
+        // AI stays silent. Persist the visitor's message (done above), run cheap
+        // no-API lead extraction so the operator sees any contact info, then return
+        // a human-mode marker. The operator's reply reaches the widget via its poll.
+        if (db.getTakeoverMode(sessionId) === 'human') {
+            try {
+                const extracted = guardrails.extractLeadData(message, session.leadData);
+                if (Object.keys(extracted).length > 0) {
+                    session.leadData = { ...session.leadData, ...extracted };
+                    db.updateConversationLeadData(sessionId, session.leadData);
+                }
+            } catch (err) {
+                console.error('Human-mode lead extract error:', err.message);
+            }
+            return res.json({
+                mode: 'human',
+                message: null,
+                quickReplies: [],
+                leadData: session.leadData,
+                sessionId,
+            });
         }
 
         // Service-interest classification (which Snow Media service they ask about).
@@ -695,9 +752,12 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             content: assistantMessage
         });
 
-        // Persist assistant message (fire and forget)
+        // Persist assistant message (fire and forget). Capture the row id so the
+        // widget can advance its poll cursor and only pick up out-of-band messages
+        // (operator replies / fallback bridge) on subsequent polls.
+        let assistantMessageId = null;
         try {
-            db.addMessage(sessionId, 'assistant', assistantMessage, null, quickReplies.length > 0 ? quickReplies : null);
+            assistantMessageId = db.addMessage(sessionId, 'assistant', assistantMessage, null, quickReplies.length > 0 ? quickReplies : null);
         } catch (err) {
             console.error('Error persisting assistant message:', err.message);
             alerts.databaseError(err, { sessionId, op: 'addMessage:assistant' });
@@ -771,7 +831,9 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             message: assistantMessage,
             quickReplies,
             leadData: session.leadData,
-            sessionId
+            sessionId,
+            mode: 'ai',
+            messageId: assistantMessageId
         };
 
         res.json(responsePayload);
@@ -812,8 +874,17 @@ function detectHandoffTriggers(message, session, sessionId) {
         leadName: leadData.name || 'Unknown',
         leadEmail: leadData.email || 'Not captured',
         leadBusiness: leadData.businessType || leadData.business || 'Unknown',
-        conversationSummary: getConversationSummary()
+        conversationSummary: getConversationSummary(),
+        // Deep link into the live-takeover console, opened straight to this chat.
+        link: config.publicBaseUrl ? `${config.publicBaseUrl}/live.html?c=${sessionId}` : undefined
     };
+
+    // Flag the conversation for the operator queue. 'requested' does NOT silence the
+    // AI (it keeps answering); it only surfaces the chat in the console and makes the
+    // Discord deep link land on a pre-flagged conversation.
+    function flagRequested() {
+        try { db.setTakeoverMode(sessionId, 'requested'); } catch (_e) {}
+    }
 
     // Trigger 1: Explicit request for human
     const humanPhrases = [
@@ -822,6 +893,7 @@ function detectHandoffTriggers(message, session, sessionId) {
         'speak with milos', 'talk to milos', 'connect me'
     ];
     if (humanPhrases.some(p => lower.includes(p))) {
+        flagRequested();
         alerts.humanHandoff({ ...alertContext, reason: 'Explicit request for human' });
         db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'handoff', label: 'human_request', detail: message.substring(0, 200) });
         return;
@@ -842,6 +914,7 @@ function detectHandoffTriggers(message, session, sessionId) {
             );
         });
         if (frustrationSignals.length >= 2) {
+            flagRequested();
             alerts.humanHandoff({ ...alertContext, reason: 'Frustration detected (2+ negative signals)' });
             db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'handoff', label: 'frustration', detail: message.substring(0, 200) });
             return;
@@ -956,6 +1029,31 @@ app.post('/api/leads', chatLimiter, async (req, res) => {
         });
 
         res.status(500).json({ error: 'Failed to capture lead' });
+    }
+});
+
+// Takeover poll: the widget calls this on an interval while open to pick up the
+// current takeover mode and any out-of-band assistant messages (operator replies
+// or the fallback bridge) newer than the cursor it holds. Keyed on the unguessable
+// sessionId, same trust model as /api/chat, so no admin auth.
+app.get('/api/chat/:sessionId/poll', pollLimiter, (req, res) => {
+    const { sessionId } = req.params;
+    if (!isValidId(sessionId)) {
+        return res.status(400).json({ error: 'Invalid session ID' });
+    }
+    const since = parseInt(req.query.since, 10) || 0;
+    try {
+        const mode = db.getTakeoverMode(sessionId);
+        const messages = db.getMessagesSince(sessionId, since).map(m => ({
+            id: m.id,
+            content: m.content,
+            senderType: m.sender_type || null,
+            createdAt: m.created_at
+        }));
+        res.json({ mode, messages });
+    } catch (err) {
+        console.error('Poll error:', err.message);
+        res.status(500).json({ error: 'poll_failed' });
     }
 });
 

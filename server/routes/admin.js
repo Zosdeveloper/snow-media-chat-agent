@@ -10,6 +10,7 @@ const db = require('../database/db');
 const ragService = require('../services/ragService');
 const autoTagger = require('../services/autoTagger');
 const config = require('../config');
+const sessions = require('../sessionStore'); // shared in-memory session Map (invalidate on takeover/release)
 
 /**
  * Admin authentication middleware
@@ -166,6 +167,100 @@ router.patch('/conversations/:id/meeting-outcome', (req, res) => {
     } catch (error) {
         console.error('Error updating meeting outcome:', error.message);
         res.status(500).json({ error: 'Failed to update meeting outcome' });
+    }
+});
+
+// ============================================
+// LIVE TAKEOVER ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/admin/live-queue
+ * Conversations needing operator attention: already flagged (requested/human) or
+ * that fired a handoff/hot_lead signal within the configured window.
+ */
+router.get('/live-queue', (req, res) => {
+    try {
+        const queue = db.getLiveQueue({ sinceHours: config.takeover.queueSinceHours });
+        res.json({ queue });
+    } catch (error) {
+        console.error('Error getting live queue:', error.message);
+        res.status(500).json({ error: 'Failed to get live queue' });
+    }
+});
+
+/**
+ * POST /api/admin/conversations/:id/takeover
+ * Operator takes over: the AI goes silent for this conversation. Invalidate the
+ * in-memory session so that when control is released, the next AI turn rebuilds
+ * full context from the DB (including the operator's turns).
+ */
+router.post('/conversations/:id/takeover', (req, res) => {
+    try {
+        const id = req.params.id;
+        if (!db.getConversation(id)) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        db.setTakeoverMode(id, 'human');
+        sessions.delete(id);
+        db.logSignalEvent({ conversationId: id, sessionId: id, eventType: 'handoff', label: 'takeover_started' });
+        res.json({ success: true, mode: 'human' });
+    } catch (error) {
+        console.error('Error taking over conversation:', error.message);
+        res.status(500).json({ error: 'Failed to take over' });
+    }
+});
+
+/**
+ * POST /api/admin/conversations/:id/release
+ * Hand control back to the AI. Invalidate the in-memory session so the next visitor
+ * turn rebuilds message history from the DB (with the operator's turns included).
+ */
+router.post('/conversations/:id/release', (req, res) => {
+    try {
+        const id = req.params.id;
+        if (!db.getConversation(id)) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        db.setTakeoverMode(id, 'ai');
+        sessions.delete(id);
+        res.json({ success: true, mode: 'ai' });
+    } catch (error) {
+        console.error('Error releasing conversation:', error.message);
+        res.status(500).json({ error: 'Failed to release' });
+    }
+});
+
+/**
+ * POST /api/admin/conversations/:id/operator-message
+ * Inject a human reply. Stored as an assistant/operator message; the visitor picks
+ * it up on their next widget poll. Auto-flips the conversation to human mode if the
+ * operator starts typing before explicitly tapping "Take over".
+ */
+router.post('/conversations/:id/operator-message', (req, res) => {
+    try {
+        const id = req.params.id;
+        const { content } = req.body;
+        if (typeof content !== 'string' || !content.trim()) {
+            return res.status(400).json({ error: 'content required' });
+        }
+        if (content.length > 2000) {
+            return res.status(400).json({ error: 'content too long' });
+        }
+        if (!db.getConversation(id)) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        const trimmed = content.trim();
+        // Sending a reply implies takeover. Idempotent if already human.
+        if (db.getTakeoverMode(id) !== 'human') {
+            db.setTakeoverMode(id, 'human');
+            sessions.delete(id);
+        }
+        const messageId = db.addOperatorMessage(id, trimmed, 'operator');
+        res.json({ success: true, id: messageId, content: trimmed });
+    } catch (error) {
+        console.error('Error sending operator message:', error.message);
+        res.status(500).json({ error: 'Failed to send message' });
     }
 });
 

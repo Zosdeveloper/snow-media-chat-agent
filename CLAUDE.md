@@ -89,6 +89,7 @@ In-memory `Map` in `server.js`. Sessions expire after 1 hour (marked `abandoned`
 
 **Public:**
 - `POST /api/chat` - Main chat (rate limited: 20/min)
+- `GET /api/chat/:sessionId/poll?since=<id>` - Live-takeover poll: returns `{ mode, messages }` (out-of-band operator/bridge messages newer than the cursor)
 - `POST /api/leads` - Lead submission
 - `GET /api/health` - Health check with DB stats
 
@@ -96,10 +97,16 @@ In-memory `Map` in `server.js`. Sessions expire after 1 hour (marked `abandoned`
 - `GET /api/admin/conversations` - List with filtering/pagination
 - `GET /api/admin/conversations/:id` - Conversation with messages
 - `PATCH /api/admin/conversations/:id/outcome` - Update outcome
+- `GET /api/admin/live-queue` - Conversations needing an operator (flagged or recent handoff/hot_lead signals)
+- `POST /api/admin/conversations/:id/takeover` - Operator takes over; AI goes silent
+- `POST /api/admin/conversations/:id/release` - Hand control back to the AI
+- `POST /api/admin/conversations/:id/operator-message` - Inject a human reply (delivered to the visitor via their poll)
 - `GET/POST/DELETE /api/admin/patterns` - Pattern CRUD
 - `GET /api/admin/export/leads` - CSV export
 - `GET /api/admin/analytics` - Dashboard analytics
 - `GET /api/admin/stats` - Quick stats
+
+**Live human takeover:** operator console at `/live.html` (mobile-first, admin-key auth). `takeover_mode` on `conversations` is `ai` | `requested` | `human`; only `human` silences the AI. A silence-fallback sweep (config `takeover.operatorSilenceMs`) auto-resumes the AI with a bridge message if an operator takes over then goes quiet. Handoff Discord alerts deep-link to `/live.html?c=<sessionId>` when `PUBLIC_URL` is set. Widget polls `/api/chat/:sessionId/poll`; operator messages render seamlessly as "Milos".
 
 ## Conversation Outcomes
 
