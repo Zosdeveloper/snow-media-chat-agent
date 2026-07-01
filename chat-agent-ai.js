@@ -7,8 +7,8 @@ class SnowMediaAIChatAgent {
     constructor(config = {}) {
         // Configuration
         this.config = {
-            apiEndpoint: config.apiEndpoint || 'http://localhost:3000/api/chat',
-            leadsEndpoint: config.leadsEndpoint || 'http://localhost:3000/api/leads',
+            apiEndpoint: config.apiEndpoint || '/api/chat',
+            leadsEndpoint: config.leadsEndpoint || '/api/leads',
             calendlyUrl: config.calendlyUrl || 'https://calendly.com/milos-thesnowmedia/30min',
             autoOpen: config.autoOpen !== false,
             autoOpenDelay: config.autoOpenDelay || 3000,
@@ -39,6 +39,17 @@ class SnowMediaAIChatAgent {
         this.leadData = {};
         this.messageHistory = [];
         this.pendingMessage = null;
+
+        // Live human takeover: poll state. lastSeenId is the cursor into the
+        // server's message ids; the poll only ever surfaces out-of-band assistant
+        // messages (operator replies / fallback bridge) newer than it.
+        this.takeoverMode = 'ai';
+        this.lastSeenId = 0;
+        this.renderedIds = new Set();
+        this.pollTimer = null;
+        this.pollIntervalMs = this.config.pollIntervalMs || 5000;
+        this._pollReady = false;
+        this._pollPrimed = false;
 
         // Capture page context, UTM params, and persistent visitor ID
         this.pageContext = this.capturePageContext();
@@ -84,19 +95,113 @@ class SnowMediaAIChatAgent {
         }
     }
 
+    isValidEmail(email) {
+        return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    }
+
+    // Booking entry point fired by the "Book a Call" button. If we already have a
+    // usable email, open Calendly straight away (no friction on the high-intent
+    // path). Otherwise capture the email inline first so a visitor who opens
+    // Calendly and abandons it still leaves a follow-up-able lead.
+    requestBooking() {
+        if (this.isValidEmail(this.leadData.email)) {
+            this.openCalendly();
+            return;
+        }
+        this.showEmailGate();
+    }
+
+    showEmailGate() {
+        if (document.getElementById('snow-email-gate')) {
+            document.querySelector('#snow-email-gate .snow-gate-input')?.focus();
+            return;
+        }
+        this.clearQuickReplies();
+        const wrap = document.createElement('div');
+        wrap.className = 'message bot';
+        wrap.id = 'snow-email-gate';
+        wrap.innerHTML = `
+            <div class="message-content">
+                One quick thing before I open the calendar, what's the best email for the invite? The team will look over your setup before we talk.
+                <div class="snow-gate-form" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                    <input type="email" class="snow-gate-input" placeholder="you@company.com" autocomplete="email" inputmode="email"
+                        style="width:100%;padding:11px 14px;border:1px solid #d4e3f0;border-radius:12px;font-size:16px;color:#263B80;outline:none;background:#fff;">
+                    <button type="button" class="snow-gate-btn"
+                        style="padding:11px 18px;background:linear-gradient(135deg,#10b981,#059669);border:none;border-radius:9999px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Open calendar</button>
+                    <div class="snow-gate-err" style="display:none;color:#dc2626;font-size:12px;">That email doesn't look right, mind checking it?</div>
+                    <button type="button" class="snow-gate-skip"
+                        style="background:none;border:none;color:#64748b;font-size:12px;text-decoration:underline;cursor:pointer;padding:2px 0;align-self:flex-start;">Skip, just open the calendar</button>
+                </div>
+            </div>
+            <div class="message-time">${this.getTimeString()}</div>`;
+        this.chatMessages.appendChild(wrap);
+        this.scrollToBottom();
+
+        const input = wrap.querySelector('.snow-gate-input');
+        const submit = () => this.submitEmailGate(wrap);
+        wrap.querySelector('.snow-gate-btn').addEventListener('click', (e) => { e.preventDefault(); submit(); });
+        wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.dismissGate(wrap); this.openCalendly(); });
+        input.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+        setTimeout(() => input.focus(), 50);
+    }
+
+    submitEmailGate(wrap) {
+        const input = wrap.querySelector('.snow-gate-input');
+        const err = wrap.querySelector('.snow-gate-err');
+        const email = (input.value || '').trim();
+        if (!this.isValidEmail(email)) {
+            err.style.display = 'block';
+            input.focus();
+            return;
+        }
+        this.leadData.email = email;
+        this.onLeadDataUpdate(this.leadData);
+        // Persist immediately so the lead survives a Calendly abandon.
+        this.submitLead();
+        this.dismissGate(wrap);
+        this.addMessage("Perfect. Opening the calendar now, grab whatever time works.", 'bot');
+        this.openCalendly();
+    }
+
+    dismissGate(wrap) {
+        wrap.querySelector('.snow-gate-form')?.remove();
+    }
+
+    // High-entropy, unguessable ids. The server treats both as bearer
+    // capabilities, so randomUUID (122 bits) is the floor; the Math.random
+    // branch is only a fallback for very old browsers.
+    newId(prefix) {
+        const rand = (self.crypto && self.crypto.randomUUID)
+            ? self.crypto.randomUUID()
+            : (Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+        return prefix + rand;
+    }
+
     getOrCreateSessionId() {
         let sessionId = sessionStorage.getItem('snow_chat_session');
         if (!sessionId) {
-            sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            sessionId = this.newId('session_');
             sessionStorage.setItem('snow_chat_session', sessionId);
         }
         return sessionId;
     }
 
+    readHoneypots() {
+        const hp = {};
+        const inputs = this.chatWidget?.querySelectorAll('.snow-hp') || [];
+        inputs.forEach(input => {
+            const key = input.getAttribute('name');
+            if (!key) return;
+            const map = { website: 'hp_website', company: 'hp_company', phone_alt: 'hp_timing' };
+            hp[map[key] || ('hp_' + key)] = input.value || '';
+        });
+        return hp;
+    }
+
     getOrCreateVisitorId() {
         let visitorId = localStorage.getItem('snow_visitor_id');
         if (!visitorId) {
-            visitorId = 'visitor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            visitorId = this.newId('visitor_');
             localStorage.setItem('snow_visitor_id', visitorId);
         }
         return visitorId;
@@ -133,11 +238,13 @@ class SnowMediaAIChatAgent {
     }
 
     startBehaviorTracking() {
+        // Track time on page (update every 10s)
         const pageLoadTime = Date.now();
         this._timeInterval = setInterval(() => {
             this.behaviorSignals.timeOnPage = Math.round((Date.now() - pageLoadTime) / 1000);
         }, 10000);
 
+        // Track scroll depth
         const onScroll = () => {
             const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
             const docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
@@ -191,13 +298,27 @@ class SnowMediaAIChatAgent {
 
     getPageSpecificDelay() {
         const path = window.location.pathname.toLowerCase();
+
+        // Contact page: fast trigger, they want to talk
         if (path.includes('/contact')) return 2000;
+
+        // Pricing/plans: they're evaluating, trigger at 15-20s
         if (path.includes('/pricing') || path.includes('/plans')) return 17000;
+
+        // Service pages: let them read a bit, 30-45s
         if (path.includes('/services/')) return 35000;
         if (path.includes('/services')) return 30000;
+
+        // Case studies: engaged, 25-30s
         if (path.includes('/case-stud')) return 25000;
+
+        // Blog/resources: don't interrupt, 60s+
         if (path.includes('/blog') || path.includes('/resources') || path.includes('/ai-tools')) return 60000;
+
+        // About/approach: medium interest, 20s
         if (path.includes('/about') || path.includes('/approach')) return 20000;
+
+        // Homepage/default: standard 3s (original behavior)
         return this.config.autoOpenDelay;
     }
 
@@ -213,13 +334,16 @@ class SnowMediaAIChatAgent {
             if (this.messageHistory.length === 0) {
                 this.startConversation();
             }
+            this.startPolling();
+        } else {
+            this.stopPolling();
         }
     }
 
     async startConversation() {
         // Initial greeting from Milos
         const greeting = this.config.greeting ||
-            "Hey! I'm Milos. Are you looking to scale profitably with paid ads?";
+            "Hey, I am Milos. Just browsing, or looking to scale profitably with paid ads?";
 
         await this.simulateTyping(1200);
         this.addMessage(greeting, 'bot');
@@ -271,7 +395,8 @@ class SnowMediaAIChatAgent {
                     pageContext: this.pageContext,
                     utmParams: this.utmParams,
                     visitorId: this.visitorId,
-                    behaviorSignals: this.behaviorSignals
+                    behaviorSignals: this.behaviorSignals,
+                    ...this.readHoneypots()
                 })
             });
 
@@ -287,7 +412,26 @@ class SnowMediaAIChatAgent {
                 this.onLeadDataUpdate(this.leadData);
             }
 
+            this.takeoverMode = data.mode || 'ai';
+
+            // A human operator has taken over: the server returned no AI message.
+            // Don't render a bot bubble; the operator's reply arrives via the poll
+            // loop and simply appears (seamless, still "Milos" to the visitor).
+            if (data.mode === 'human' || !data.message) {
+                this.hideTypingIndicator();
+                this.startPolling();
+                this.isTyping = false;
+                return;
+            }
+
+            // Advance the poll cursor so the poll loop never re-renders this AI reply.
+            if (data.messageId) {
+                this.lastSeenId = Math.max(this.lastSeenId, data.messageId);
+                this.renderedIds.add(data.messageId);
+            }
+
             // Simulate natural typing delay (1.5-3s, scaled by length)
+            // Short replies (under 80 chars): 1.5s. Longer: up to 3s
             const baseDelay = 1500;
             const lengthFactor = Math.min(data.message.length / 80, 1);
             const typingDelay = baseDelay + (lengthFactor * 1500);
@@ -324,7 +468,67 @@ class SnowMediaAIChatAgent {
         this.isTyping = false;
     }
 
+    // ---- Live human takeover polling ----
+
+    // Prime the cursor to the current latest message id without rendering, so the
+    // poll loop only surfaces genuinely new out-of-band messages and never dumps
+    // history after a page reload (this widget does not replay history visually).
+    async primePollCursor() {
+        try {
+            const url = `${this.config.apiEndpoint}/${encodeURIComponent(this.sessionId)}/poll?since=0`;
+            const res = await fetch(url);
+            if (res.ok) {
+                const data = await res.json();
+                this.takeoverMode = data.mode || 'ai';
+                if (Array.isArray(data.messages)) {
+                    for (const m of data.messages) {
+                        if (m.id > this.lastSeenId) this.lastSeenId = m.id;
+                    }
+                }
+            }
+        } catch (_e) { /* best-effort */ }
+        this._pollReady = true;
+    }
+
+    startPolling() {
+        if (!this._pollPrimed) {
+            this._pollPrimed = true;
+            this.primePollCursor();
+        }
+        if (this.pollTimer) return;
+        this.pollTimer = setInterval(() => this.pollOnce(), this.pollIntervalMs);
+    }
+
+    stopPolling() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+    }
+
+    async pollOnce() {
+        if (!this.isOpen || document.hidden || !this._pollReady) return;
+        try {
+            const url = `${this.config.apiEndpoint}/${encodeURIComponent(this.sessionId)}/poll?since=${this.lastSeenId}`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+            this.takeoverMode = data.mode || 'ai';
+            if (!Array.isArray(data.messages)) return;
+            for (const m of data.messages) {
+                if (m.id > this.lastSeenId) this.lastSeenId = m.id;
+                if (this.renderedIds.has(m.id)) continue;
+                this.renderedIds.add(m.id);
+                this.hideTypingIndicator();
+                this.addMessage(m.content, 'bot');
+            }
+        } catch (_e) { /* best-effort */ }
+    }
+
     addMessage(text, sender) {
+        // Skip empty/whitespace-only messages to prevent empty bubble glitch
+        if (!text || !text.trim()) return;
+
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}`;
 
@@ -359,7 +563,7 @@ class SnowMediaAIChatAgent {
         // Convert [BOOK_CALL] to booking button
         let processed = escaped.replace(
             /\[BOOK_CALL\]/g,
-            '<button class="book-call-btn" onclick="window.snowMediaChat.openCalendly()">📅 Book a Call</button>'
+            '<button class="book-call-btn" onclick="window.snowMediaChat.requestBooking()">📅 Book a Call</button>'
         );
 
         // Convert URLs to links (on escaped text)
