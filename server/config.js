@@ -135,9 +135,32 @@ const config = {
     },
 
     // Rate limiting
+    // 8/min: a human types ~5 chat messages a minute; 20 was bot headroom.
     rateLimit: {
         windowMs: 60 * 1000,  // 1 minute
-        maxRequests: 20,
+        maxRequests: 8,
+        // Second bucket: per-IP daily ceiling. In-memory, resets on deploy,
+        // which is fine — it exists to stop a single IP grinding all day.
+        dailyMaxRequests: parseInt(process.env.DAILY_IP_MAX, 10) || 80,
+    },
+
+    // Anti-bot / spend protection (Layer 1, 2026-07-07). Bots hammered the
+    // open /api/chat endpoint with gibberish; every message was a Sonnet call.
+    spamGuard: {
+        // Reject visitor endpoints when neither Origin nor Referer matches
+        // allowedOrigins. CORS alone doesn't stop curl/scripts — this does.
+        // Enforced in production by default; ENFORCE_ORIGIN=false is the
+        // kill-switch if a legit embed ever gets blocked.
+        enforceOrigin: process.env.ENFORCE_ORIGIN
+            ? process.env.ENFORCE_ORIGIN === 'true'
+            : process.env.NODE_ENV === 'production',
+        // Gibberish messages per session before it's tagged intent 'bot_junk'
+        // and shadow-banned (canned replies, AI never called again).
+        junkStrikeLimit: 3,
+        // Global daily ceiling on chat Claude calls: caps worst-case API spend
+        // at a known number even if a botnet rotates IPs. Legit traffic today
+        // is a few dozen calls/day, so 400 is generous.
+        dailyClaudeCallLimit: parseInt(process.env.DAILY_CLAUDE_CALL_LIMIT, 10) || 400,
     },
 
     // CORS

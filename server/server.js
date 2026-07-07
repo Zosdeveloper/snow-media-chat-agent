@@ -25,6 +25,7 @@ const SYSTEM_PROMPT = require('./prompts/systemPrompt');
 const knowledgeBase = require('./services/knowledgeBase');
 const followUpService = require('./services/followUpService');
 const spamFilter = require('./services/spamFilter');
+const junkDetector = require('./services/junkDetector');
 const intentClassifier = require('./services/intentClassifier');
 const qualificationService = require('./services/qualificationService');
 const serviceClassifier = require('./services/serviceClassifier');
@@ -75,6 +76,56 @@ const pollLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false
 });
+
+// Per-IP daily ceiling on chat messages, layered under the per-minute limiter.
+// Stops a single IP grinding gibberish all day at 8/min. In-memory: resets on
+// deploy, which is acceptable for a spend guard.
+const dailyChatLimiter = rateLimit({
+    windowMs: 24 * 60 * 60 * 1000,
+    max: config.rateLimit.dailyMaxRequests,
+    message: { error: "You've hit the daily chat limit. Email milos@thesnowmedia.com and we'll pick it up there." },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Origin gate for visitor-facing endpoints. CORS is enforced by browsers, not
+// the server, so scripts POSTing directly to the public Railway URL sail past
+// the whitelist. Real widget traffic always carries an allowed Origin
+// (cross-origin fetch) or Referer (same-origin pages); naive bots carry
+// neither. Webhooks/health are NOT gated (server-to-server, no Origin).
+// Kill-switch: ENFORCE_ORIGIN=false.
+function requireKnownOrigin(req, res, next) {
+    if (!config.spamGuard.enforceOrigin) return next();
+    const origin = req.get('origin');
+    const referer = req.get('referer');
+    const originOk = !!origin && config.allowedOrigins.includes(origin);
+    const refererOk = !!referer && config.allowedOrigins.some(
+        o => referer === o || referer.startsWith(o + '/')
+    );
+    if (originOk || refererOk) return next();
+    console.warn(`[ORIGIN GATE] blocked ${req.method} ${req.path} from ip=${req.ip} origin=${origin || '-'} referer=${referer || '-'}`);
+    return res.status(403).json({ error: 'Forbidden' });
+}
+
+// Global daily circuit breaker on chat Claude calls. If a botnet rotates IPs
+// past the per-IP limits, this caps the worst-case daily API bill at a known
+// number instead of an open tab. Counter is in-memory (resets on deploy: fine,
+// the ceiling is a blast-radius bound, not accounting).
+const claudeBudget = { day: null, count: 0, alerted: false };
+function claudeBudgetExceeded() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (claudeBudget.day !== today) {
+        claudeBudget.day = today;
+        claudeBudget.count = 0;
+        claudeBudget.alerted = false;
+    }
+    if (claudeBudget.count < config.spamGuard.dailyClaudeCallLimit) return false;
+    if (!claudeBudget.alerted) {
+        claudeBudget.alerted = true;
+        alerts.custom('Daily Claude Budget Hit', `Chat hit the ${config.spamGuard.dailyClaudeCallLimit} calls/day ceiling. Visitors now get a canned reply until midnight UTC. If this is real traffic, raise DAILY_CLAUDE_CALL_LIMIT.`, { day: today });
+    }
+    return true;
+}
 
 // Middleware
 app.use(cors(corsOptions));
@@ -158,8 +209,8 @@ function isValidId(v) {
     return typeof v === 'string' && ID_PATTERN.test(v);
 }
 
-// Chat endpoint with rate limiting
-app.post('/api/chat', chatLimiter, async (req, res) => {
+// Chat endpoint with origin gate + rate limiting (per-minute and per-day)
+app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (req, res) => {
     try {
         const { sessionId, message, leadData, pageContext, utmParams, visitorId, behaviorSignals } = req.body;
 
@@ -383,6 +434,70 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
             }
         }
 
+        // Shadow-ban: sessions tagged bot_junk never reach Claude again. Static
+        // bland reply so the bot gets no signal to adapt against. Intent lives on
+        // the conversation row, so the ban survives restarts and new deploys.
+        if (session.intent === 'bot_junk') {
+            session.messages.push({ role: 'assistant', content: junkDetector.BANNED_REPLY });
+            try { db.addMessage(sessionId, 'assistant', junkDetector.BANNED_REPLY); } catch (_e) {}
+            return res.json({
+                message: junkDetector.BANNED_REPLY,
+                quickReplies: [],
+                leadData: session.leadData,
+                sessionId,
+            });
+        }
+
+        // Junk / gibberish detector with strike system. A junk message never
+        // reaches Claude (or Voyage): it gets a canned in-voice reply. At
+        // junkStrikeLimit strikes the session is tagged bot_junk (shadow-ban
+        // above takes over from the next message). This is what stops one bot
+        // burning 41 Sonnet calls on keyboard mash.
+        const junkVerdict = junkDetector.checkMessage(message);
+        if (junkVerdict.junk) {
+            session.junkStrikes = (session.junkStrikes || 0) + 1;
+            const banned = session.junkStrikes >= config.spamGuard.junkStrikeLimit;
+            console.warn(`[JUNK] ${junkVerdict.reason} on session ${sessionId} (strike ${session.junkStrikes}${banned ? ', BANNED' : ''})`);
+            db.logSignalEvent({
+                conversationId: sessionId, sessionId,
+                eventType: 'bot_dropped',
+                label: banned ? 'junk_banned' : 'junk',
+                detail: junkVerdict.reason
+            });
+            if (banned) {
+                try {
+                    db.setConversationIntent(sessionId, 'bot_junk', 0.95, 'junk_detector');
+                    session.intent = 'bot_junk';
+                } catch (err) {
+                    console.error('Error persisting bot_junk intent:', err.message);
+                }
+            }
+            const reply = banned ? junkDetector.BANNED_REPLY : junkDetector.strikeReply(session.junkStrikes - 1);
+            session.messages.push({ role: 'assistant', content: reply });
+            try { db.addMessage(sessionId, 'assistant', reply); } catch (_e) {}
+            return res.json({
+                message: reply,
+                quickReplies: [],
+                leadData: session.leadData,
+                sessionId,
+            });
+        }
+
+        // Daily spend circuit breaker: past the ceiling, real visitors get a
+        // graceful pointer to email instead of an AI reply. Checked before the
+        // RAG/Voyage work so a tripped breaker spends nothing at all.
+        if (claudeBudgetExceeded()) {
+            const busyReply = "We're getting a lot of chat traffic right now. Fastest way to reach us today: email milos@thesnowmedia.com and you'll get a reply within a few hours.";
+            session.messages.push({ role: 'assistant', content: busyReply });
+            try { db.addMessage(sessionId, 'assistant', busyReply); } catch (_e) {}
+            return res.json({
+                message: busyReply,
+                quickReplies: [],
+                leadData: session.leadData,
+                sessionId,
+            });
+        }
+
         // Build context message with lead data
         let contextMessage = '';
         if (Object.keys(session.leadData).length > 0) {
@@ -527,6 +642,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
         // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
         // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
         const chatStartTime = Date.now();
+        claudeBudget.count++; // counted before the call: a failed call still spent a request
         let response;
         try {
             response = await anthropic.messages.create({
@@ -959,7 +1075,7 @@ async function summarizeMessages(messages, anthropicClient, priorSummary = null)
 }
 
 // Lead submission endpoint
-app.post('/api/leads', chatLimiter, async (req, res) => {
+app.post('/api/leads', requireKnownOrigin, chatLimiter, async (req, res) => {
     try {
         const { sessionId, leadData, conversationHistory } = req.body;
 
@@ -1036,7 +1152,7 @@ app.post('/api/leads', chatLimiter, async (req, res) => {
 // current takeover mode and any out-of-band assistant messages (operator replies
 // or the fallback bridge) newer than the cursor it holds. Keyed on the unguessable
 // sessionId, same trust model as /api/chat, so no admin auth.
-app.get('/api/chat/:sessionId/poll', pollLimiter, (req, res) => {
+app.get('/api/chat/:sessionId/poll', requireKnownOrigin, pollLimiter, (req, res) => {
     const { sessionId } = req.params;
     if (!isValidId(sessionId)) {
         return res.status(400).json({ error: 'Invalid session ID' });
@@ -1058,7 +1174,7 @@ app.get('/api/chat/:sessionId/poll', pollLimiter, (req, res) => {
 });
 
 // Get session info (only returns non-PII data)
-app.get('/api/session/:sessionId', (req, res) => {
+app.get('/api/session/:sessionId', requireKnownOrigin, (req, res) => {
     const session = sessions.get(req.params.sessionId);
     if (!session) {
         return res.status(404).json({ error: 'Session not found' });

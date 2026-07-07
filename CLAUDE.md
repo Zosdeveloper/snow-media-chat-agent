@@ -118,9 +118,20 @@ Railway auto-deploys from `master`. Admin dashboard at the Railway URL + `/admin
 
 Database persisted at `./data/chat.db` on Railway persistent volume.
 
+## Anti-Bot / Spend Guards
+
+Layered gates on the public chat endpoint (config block `spamGuard` + `rateLimit` in `config.js`):
+
+1. **Origin gate** (`requireKnownOrigin` in server.js) - visitor endpoints 403 unless Origin/Referer matches `allowedOrigins`. Enforced in production; `ENFORCE_ORIGIN=false` is the kill-switch. Webhooks and health checks are not gated.
+2. **Junk detector** (`server/services/junkDetector.js`) - gibberish heuristics run before any API call. Strike system: canned reply per junk message, 3 strikes sets `intent=bot_junk` (a `BLOCKED_INTENTS` member) and shadow-bans the session with a static reply. Keep new rules high-precision; a false positive costs a real lead.
+3. **Rate limits** - 8/min per IP + 80/day per IP (`DAILY_IP_MAX`), in-memory.
+4. **Daily circuit breaker** - `DAILY_CLAUDE_CALL_LIMIT` (default 400) caps total chat Claude calls/day; past it visitors get a canned email pointer and one Discord alert fires.
+
+Signal events: junk strikes log as `bot_dropped` with label `junk`/`junk_banned`.
+
 ## Important Patterns
 
-- CORS whitelist in `config.js` - add new domains there, not in server.js
+- CORS whitelist in `config.js` - add new domains there, not in server.js. The origin gate reuses the same list, so a new embed domain only needs adding once.
 - Output validation in the chat endpoint flags suspicious AI responses (unrealistic percentages, guarantee language, specific pricing)
 - Lead data extraction uses regex patterns in `extractLeadData()` in server.js - name detection requires explicit introduction phrases to avoid false positives
 - All DB writes in the chat flow are fire-and-forget (caught errors logged but don't block response)

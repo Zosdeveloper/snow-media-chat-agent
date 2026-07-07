@@ -3,9 +3,15 @@ _Synthesized 2026-04-23. Progress log kept in sync with commits on master._
 
 ## Current status
 
-_Last updated 2026-07-01. The 2026-04-23 batches (below) plus follow-on performance/correctness passes and a live human takeover feature are all live on master. Railway auto-deploys from master, so everything here is in production._
+_Last updated 2026-07-07. The 2026-04-23 batches (below) plus follow-on performance/correctness passes, live human takeover, and the anti-bot spend guards are all live on master. Railway auto-deploys from master, so everything here is in production._
 
-**Production tip: `190c2d9` (master == dev, in sync).**
+**2026-07-07 session shipped:**
+- **Anti-bot Layer 1 (spend guards).** Production had 390 of 394 conversations as bot gibberish ("Rqmghhnjjnnn xckmvxxd", "."), one session burning 41 Sonnet calls on keyboard mash. Four stacked gates, all server-side, no widget changes:
+  - **Origin gate** on `/api/chat`, `/api/leads`, poll, and session-info: requests whose Origin/Referer match nothing in `config.allowedOrigins` get 403. CORS only binds browsers; this stops direct curl/script POSTs. Prod-on by default, `ENFORCE_ORIGIN=false` kill-switch. Webhooks/health untouched (server-to-server).
+  - **Junk detector + strike system** (`services/junkDetector.js`): high-precision gibberish heuristics (punctuation-only, vowelless words, consonant runs, char floods) run before Claude/Voyage. Junk gets a canned in-voice reply at zero API cost; 3 strikes tags the conversation `intent=bot_junk` (new `BLOCKED_INTENTS` member) and shadow-bans it with a static reply. Ban persists via the conversation row; existing intent gates keep junk out of follow-ups, booking, and RAG learning. Verified 0 false positives on 16 real-lead phrases incl. "HVAC", "MSNBC", URLs.
+  - **Tighter rate limits:** 8/min per IP (was 20) plus a new 80/day per-IP ceiling (`DAILY_IP_MAX`).
+  - **Daily circuit breaker:** hard cap on chat Claude calls per day (default 400, `DAILY_CLAUDE_CALL_LIMIT`); past it, visitors get a polite email pointer and a one-time Discord alert fires. Caps worst-case daily API spend even against IP rotation.
+  - Layer 2 (Cloudflare Turnstile invisible captcha, real bot-proofing for headless browsers that load the real site) is designed but needs a Cloudflare site key from the owner.
 
 **2026-07-01 session shipped (newest first):**
 - `190c2d9` Re-synced the stale root widget copies (`chat-agent-ai.js`, `embed-ai.js`) to be byte-identical to `server/public`. They had drifted a full feature behind (missing the email gate, stale localhost endpoints) but are still loaded by dev test pages (`product-landing-v3.html`, `embed-test.html`), so re-synced rather than deleted.

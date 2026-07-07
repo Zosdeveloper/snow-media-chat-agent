@@ -16,6 +16,7 @@ const ALLOWED_INTENTS = new Set(['real_lead', 'partnership', 'unclear']);
 const BLOCKED_INTENTS = new Set([
     'job_seeker', 'vendor_pitch', 'link_spam', 'academic',
     'competitor', 'free_advice', 'wrong_business', 'prompt_abuse', 'scam',
+    'bot_junk', // set by the junk detector strike system (gibberish flood)
 ]);
 
 /**
