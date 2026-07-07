@@ -1468,8 +1468,9 @@ function getStats() {
  * One-time retroactive sweep (2026-07-07): tag historical bot-gibberish
  * conversations as intent = 'bot_junk' so analytics reflect humans. Runs once
  * per environment, recorded in _migrations. Conservative on purpose: only
- * NULL-intent conversations with no contact info and no booking, where at
- * least half the user messages trip the junk detector. Fully reversible:
+ * conversations with no contact info and no booking, where at least half the
+ * user messages trip the junk detector. Reversible (overridden classifier
+ * guesses revert to NULL, not their original value):
  *   UPDATE conversations SET intent=NULL, intent_confidence=NULL, intent_source=NULL
  *   WHERE intent_source = 'retro_junk_sweep';
  * checkFn is injected (junkDetector.checkMessage) to keep db.js free of
@@ -1477,13 +1478,20 @@ function getStats() {
  */
 function runRetroJunkSweep(checkFn) {
     const db = getDb();
-    const MIGRATION = 'retro_junk_sweep_2026_07';
+    // v2: v1 only examined NULL-intent rows, but the Haiku intent classifier
+    // had already stamped most bot conversations 'unclear'/'real_lead', so v1
+    // tagged nothing in production. v2 also re-examines classifier-sourced
+    // intents: >=50% junk user messages is harder evidence than a one-shot
+    // classifier guess. Keyword/manual/admin verdicts are never overridden,
+    // and the no-contact / no-booking guards still apply.
+    const MIGRATION = 'retro_junk_sweep_2026_07_v2';
     const alreadyRun = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(MIGRATION);
     if (alreadyRun) return null;
 
     const candidates = db.prepare(`
         SELECT id FROM conversations
-        WHERE intent IS NULL
+        WHERE (intent IS NULL OR intent_source = 'classifier')
+          AND (intent IS NULL OR intent != 'bot_junk')
           AND lead_email IS NULL AND lead_phone IS NULL
           AND (booking_confirmed IS NULL OR booking_confirmed = 0)
     `).all();
