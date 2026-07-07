@@ -26,6 +26,7 @@ const knowledgeBase = require('./services/knowledgeBase');
 const followUpService = require('./services/followUpService');
 const spamFilter = require('./services/spamFilter');
 const junkDetector = require('./services/junkDetector');
+const turnstileService = require('./services/turnstileService');
 const intentClassifier = require('./services/intentClassifier');
 const qualificationService = require('./services/qualificationService');
 const serviceClassifier = require('./services/serviceClassifier');
@@ -245,6 +246,20 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
             });
         }
 
+        // Turnstile (Layer 2, dormant until TURNSTILE_* env vars are set): a NEW
+        // conversation must present a valid token before anything is persisted.
+        // Established conversations (in memory or in the DB) are never
+        // re-challenged, so the cost is one invisible check per visitor. The
+        // widget retries once with a fresh token on 'verification_required'.
+        if (config.turnstile.enabled && !sessions.get(sessionId) && !db.loadSessionState(sessionId)) {
+            const verdict = await turnstileService.verify(req.body.turnstileToken, req.ip);
+            if (!verdict.ok) {
+                console.warn(`[TURNSTILE] rejected new session ${sessionId} (${verdict.reason})`);
+                db.logSignalEvent({ sessionId, eventType: 'bot_dropped', label: 'turnstile', detail: verdict.reason });
+                return res.status(403).json({ error: 'verification_required' });
+            }
+        }
+
         // Get or create session (check in-memory first, then DB, then create new)
         let session = sessions.get(sessionId);
         let isReturningVisitor = false;
@@ -409,8 +424,11 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
                     console.log(`[KEYWORD FILTER] ${match.intent} match on session ${sessionId}`);
                     db.logSignalEvent({ conversationId: sessionId, sessionId, eventType: 'bot_dropped', label: 'keyword_spam', detail: match.intent });
                     session.messages.push({ role: 'assistant', content: match.response });
+                    // messageId advances the widget's poll cursor; without it the
+                    // poll loop re-delivers this reply as a duplicate bubble.
+                    let deflectionId = null;
                     try {
-                        db.addMessage(sessionId, 'assistant', match.response);
+                        deflectionId = db.addMessage(sessionId, 'assistant', match.response);
                     } catch (err) {
                         console.error('Error persisting deflection:', err.message);
                     }
@@ -419,6 +437,7 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
                         quickReplies: [],
                         leadData: session.leadData,
                         sessionId,
+                        messageId: deflectionId || undefined,
                     });
                 }
             }
@@ -439,12 +458,14 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
         // the conversation row, so the ban survives restarts and new deploys.
         if (session.intent === 'bot_junk') {
             session.messages.push({ role: 'assistant', content: junkDetector.BANNED_REPLY });
-            try { db.addMessage(sessionId, 'assistant', junkDetector.BANNED_REPLY); } catch (_e) {}
+            let bannedId = null;
+            try { bannedId = db.addMessage(sessionId, 'assistant', junkDetector.BANNED_REPLY); } catch (_e) {}
             return res.json({
                 message: junkDetector.BANNED_REPLY,
                 quickReplies: [],
                 leadData: session.leadData,
                 sessionId,
+                messageId: bannedId || undefined,
             });
         }
 
@@ -474,12 +495,14 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
             }
             const reply = banned ? junkDetector.BANNED_REPLY : junkDetector.strikeReply(session.junkStrikes - 1);
             session.messages.push({ role: 'assistant', content: reply });
-            try { db.addMessage(sessionId, 'assistant', reply); } catch (_e) {}
+            let strikeId = null;
+            try { strikeId = db.addMessage(sessionId, 'assistant', reply); } catch (_e) {}
             return res.json({
                 message: reply,
                 quickReplies: [],
                 leadData: session.leadData,
                 sessionId,
+                messageId: strikeId || undefined,
             });
         }
 
@@ -489,12 +512,14 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
         if (claudeBudgetExceeded()) {
             const busyReply = "We're getting a lot of chat traffic right now. Fastest way to reach us today: email milos@thesnowmedia.com and you'll get a reply within a few hours.";
             session.messages.push({ role: 'assistant', content: busyReply });
-            try { db.addMessage(sessionId, 'assistant', busyReply); } catch (_e) {}
+            let busyId = null;
+            try { busyId = db.addMessage(sessionId, 'assistant', busyReply); } catch (_e) {}
             return res.json({
                 message: busyReply,
                 quickReplies: [],
                 leadData: session.leadData,
                 sessionId,
+                messageId: busyId || undefined,
             });
         }
 
@@ -1148,6 +1173,16 @@ app.post('/api/leads', requireKnownOrigin, chatLimiter, async (req, res) => {
     }
 });
 
+// Widget bootstrap config. Only ever exposes PUBLIC values (a Turnstile site
+// key is public by design; the secret never leaves the server). Returns a null
+// site key while Turnstile is dormant, which keeps the widget's token code
+// path completely inert.
+app.get('/api/chat/config', requireKnownOrigin, (req, res) => {
+    res.json({
+        turnstileSiteKey: config.turnstile.enabled ? config.turnstile.siteKey : null,
+    });
+});
+
 // Takeover poll: the widget calls this on an interval while open to pick up the
 // current takeover mode and any out-of-band assistant messages (operator replies
 // or the fallback bridge) newer than the cursor it holds. Keyed on the unguessable
@@ -1374,6 +1409,23 @@ async function startServer() {
         // Initialize database
         await db.initialize();
         console.log('Database initialized successfully');
+
+        // One-time retroactive junk sweep: tags historical bot-gibberish
+        // conversations bot_junk so the dashboard reflects humans. Runs once per
+        // environment (_migrations), reversible via intent_source='retro_junk_sweep'.
+        try {
+            const sweep = db.runRetroJunkSweep(junkDetector.checkMessage);
+            if (sweep) {
+                console.log(`[JUNK SWEEP] examined ${sweep.examined} conversations, tagged ${sweep.tagged} as bot_junk`);
+                alerts.custom(
+                    'Retro Junk Sweep Complete',
+                    `Tagged ${sweep.tagged} of ${sweep.examined} historical no-contact conversations as bot_junk. They are excluded from dashboard analytics but still visible in the conversations list. Reversible: intent_source='retro_junk_sweep'.`,
+                    { tagged: sweep.tagged, examined: sweep.examined }
+                );
+            }
+        } catch (err) {
+            console.error('[JUNK SWEEP] failed:', err.message);
+        }
 
         // Check if embedding service is available
         if (embeddingService.isAvailable()) {

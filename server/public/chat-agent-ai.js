@@ -182,6 +182,8 @@ class SnowMediaAIChatAgent {
         if (!sessionId) {
             sessionId = this.newId('session_');
             sessionStorage.setItem('snow_chat_session', sessionId);
+            // Fresh session: the first message may need a Turnstile token.
+            sessionStorage.removeItem('snow_chat_started');
         }
         return sessionId;
     }
@@ -378,33 +380,126 @@ class SnowMediaAIChatAgent {
         this.getAIResponse(text);
     }
 
+    // ---- Cloudflare Turnstile (anti-bot Layer 2) ----
+    // Fully inert unless the server advertises a site key via /api/chat/config.
+    // A token is only needed for the FIRST message of a new conversation; the
+    // server never re-challenges an established conversation.
+
+    async fetchChatConfig() {
+        if (this._chatConfig !== undefined) return this._chatConfig;
+        try {
+            const base = this.config.apiEndpoint.replace(/\/api\/chat$/, '');
+            const res = await fetch(base + '/api/chat/config');
+            this._chatConfig = res.ok ? await res.json() : null;
+        } catch (_e) {
+            this._chatConfig = null;
+        }
+        return this._chatConfig;
+    }
+
+    loadTurnstileScript() {
+        if (window.turnstile) return Promise.resolve();
+        if (this._tsScriptPromise) return this._tsScriptPromise;
+        this._tsScriptPromise = new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+            s.async = true;
+            s.onload = resolve;
+            s.onerror = () => reject(new Error('turnstile script failed'));
+            document.head.appendChild(s);
+        });
+        return this._tsScriptPromise;
+    }
+
+    async getTurnstileToken(forceFresh) {
+        const cfg = await this.fetchChatConfig();
+        const siteKey = cfg && cfg.turnstileSiteKey;
+        if (!siteKey) return null; // dormant: nothing to do
+        try {
+            await this.loadTurnstileScript();
+        } catch (_e) {
+            return null;
+        }
+        if (!window.turnstile) return null;
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => { this._tsResolve = null; resolve(null); }, 12000);
+            this._tsResolve = (t) => { clearTimeout(timer); this._tsResolve = null; resolve(t); };
+            try {
+                if (this._tsWidgetId !== undefined && forceFresh) {
+                    window.turnstile.reset(this._tsWidgetId);
+                } else if (this._tsWidgetId === undefined) {
+                    // interaction-only: invisible unless Cloudflare decides a
+                    // visible challenge is needed, which renders in the message
+                    // area rather than floating over the page.
+                    let el = document.getElementById('snow-ts-container');
+                    if (!el) {
+                        el = document.createElement('div');
+                        el.id = 'snow-ts-container';
+                        (this.chatMessages || document.body).appendChild(el);
+                    }
+                    this._tsWidgetId = window.turnstile.render(el, {
+                        sitekey: siteKey,
+                        appearance: 'interaction-only',
+                        callback: (token) => { if (this._tsResolve) this._tsResolve(token); },
+                        'error-callback': () => { if (this._tsResolve) this._tsResolve(null); },
+                    });
+                }
+            } catch (_e) {
+                if (this._tsResolve) this._tsResolve(null);
+            }
+        });
+    }
+
+    postChatMessage(userMessage, turnstileToken) {
+        return fetch(this.config.apiEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                sessionId: this.sessionId,
+                message: userMessage,
+                leadData: this.leadData,
+                pageContext: this.pageContext,
+                utmParams: this.utmParams,
+                visitorId: this.visitorId,
+                behaviorSignals: this.behaviorSignals,
+                ...(turnstileToken ? { turnstileToken } : {}),
+                ...this.readHoneypots()
+            })
+        });
+    }
+
     async getAIResponse(userMessage) {
         this.isTyping = true;
         this.showTypingIndicator();
 
         try {
-            const response = await fetch(this.config.apiEndpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    sessionId: this.sessionId,
-                    message: userMessage,
-                    leadData: this.leadData,
-                    pageContext: this.pageContext,
-                    utmParams: this.utmParams,
-                    visitorId: this.visitorId,
-                    behaviorSignals: this.behaviorSignals,
-                    ...this.readHoneypots()
-                })
-            });
+            // First message of a new conversation may need a Turnstile token
+            // (null whenever the feature is dormant server-side).
+            let turnstileToken = null;
+            if (!sessionStorage.getItem('snow_chat_started')) {
+                turnstileToken = await this.getTurnstileToken(false);
+            }
+
+            let response = await this.postChatMessage(userMessage, turnstileToken);
+
+            // Server demanded verification (token missing or expired): retry
+            // once with a freshly minted token.
+            if (response.status === 403) {
+                const errBody = await response.json().catch(() => ({}));
+                if (errBody.error === 'verification_required') {
+                    const fresh = await this.getTurnstileToken(true);
+                    response = await this.postChatMessage(userMessage, fresh);
+                }
+            }
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
+            sessionStorage.setItem('snow_chat_started', '1');
 
             // Update lead data
             if (data.leadData) {

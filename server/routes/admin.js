@@ -542,6 +542,12 @@ router.get('/analytics', (req, res) => {
     try {
         const dbInstance = db.getDb();
 
+        // Every funnel/volume metric counts humans only. Bot-gibberish
+        // conversations (intent = 'bot_junk', live strike system + retro sweep)
+        // stay visible in the conversations list and the intent mix below, but
+        // must never skew conversion math. Fixed literal, not user input.
+        const HUMAN = "(intent IS NULL OR intent != 'bot_junk')";
+
         // Conversion rate
         const conversionStats = dbInstance.prepare(`
             SELECT
@@ -551,6 +557,7 @@ router.get('/analytics', (req, res) => {
                 SUM(CASE WHEN outcome = 'not_qualified' THEN 1 ELSE 0 END) as not_qualified,
                 SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) as abandoned
             FROM conversations
+            WHERE ${HUMAN}
         `).get();
 
         // Average messages before conversion
@@ -560,7 +567,7 @@ router.get('/analytics', (req, res) => {
                 AVG(CASE WHEN outcome = 'contact_captured' THEN message_count END) as avg_contact,
                 AVG(message_count) as avg_all
             FROM conversations
-            WHERE message_count > 0
+            WHERE message_count > 0 AND ${HUMAN}
         `).get();
 
         // Conversations over last 30 days (with confirmed bookings per day)
@@ -571,7 +578,7 @@ router.get('/analytics', (req, res) => {
                 SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted,
                 SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as booked
             FROM conversations
-            WHERE created_at >= DATE('now', '-30 days')
+            WHERE created_at >= DATE('now', '-30 days') AND ${HUMAN}
             GROUP BY DATE(created_at)
             ORDER BY date ASC
         `).all();
@@ -580,7 +587,7 @@ router.get('/analytics', (req, res) => {
         const leadsWithContact = dbInstance.prepare(`
             SELECT COUNT(*) as count
             FROM conversations
-            WHERE lead_email IS NOT NULL OR lead_phone IS NOT NULL
+            WHERE (lead_email IS NOT NULL OR lead_phone IS NOT NULL) AND ${HUMAN}
         `).get();
 
         // Busiest hours (when people chat)
@@ -589,6 +596,7 @@ router.get('/analytics', (req, res) => {
                 CAST(strftime('%H', created_at) AS INTEGER) as hour,
                 COUNT(*) as count
             FROM conversations
+            WHERE ${HUMAN}
             GROUP BY hour
             ORDER BY hour ASC
         `).all();
@@ -600,7 +608,7 @@ router.get('/analytics', (req, res) => {
                 COUNT(*) as count,
                 SUM(CASE WHEN outcome = 'converted' THEN 1 ELSE 0 END) as converted
             FROM conversations
-            WHERE source_url IS NOT NULL AND source_url != ''
+            WHERE source_url IS NOT NULL AND source_url != '' AND ${HUMAN}
             GROUP BY source_url
             ORDER BY count DESC
             LIMIT 10
@@ -615,6 +623,7 @@ router.get('/analytics', (req, res) => {
                 SUM(CASE WHEN booking_trigger_reason IS NOT NULL THEN 1 ELSE 0 END) as book_intent,
                 SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as confirmed
             FROM conversations
+            WHERE ${HUMAN}
         `).get();
 
         // Booking reconciliation: webhook truth vs manually-marked outcome
@@ -645,7 +654,7 @@ router.get('/analytics', (req, res) => {
                 COUNT(*) as total,
                 SUM(CASE WHEN booking_confirmed = 1 OR outcome = 'converted' THEN 1 ELSE 0 END) as booked
             FROM conversations
-            WHERE lead_business_type IS NOT NULL AND lead_business_type != ''
+            WHERE lead_business_type IS NOT NULL AND lead_business_type != '' AND ${HUMAN}
             GROUP BY lead_business_type
             ORDER BY total DESC
             LIMIT 8
@@ -671,7 +680,7 @@ router.get('/analytics', (req, res) => {
                 SUM(CASE WHEN lead_email IS NOT NULL OR lead_phone IS NOT NULL THEN 1 ELSE 0 END) as leads,
                 SUM(CASE WHEN booking_confirmed = 1 OR outcome = 'converted' THEN 1 ELSE 0 END) as booked
             FROM conversations
-            WHERE service_interest IS NOT NULL AND service_interest != ''
+            WHERE service_interest IS NOT NULL AND service_interest != '' AND ${HUMAN}
             GROUP BY service_interest
             ORDER BY total DESC
         `).all();
@@ -721,6 +730,7 @@ router.get('/analytics', (req, res) => {
               AND c.outcome NOT IN ('converted', 'contact_captured')
               AND c.lead_email IS NULL AND c.lead_phone IS NULL
               AND c.message_count >= 2
+              AND (c.intent IS NULL OR c.intent != 'bot_junk')
               AND (c.outcome = 'abandoned' OR (c.outcome = 'in_progress' AND datetime(c.updated_at) < datetime('now', '-30 minutes')))
             ORDER BY c.updated_at DESC
             LIMIT 20

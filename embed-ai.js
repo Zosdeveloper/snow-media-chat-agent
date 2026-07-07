@@ -551,11 +551,14 @@
 
             // High-entropy id (server treats sessionId as a bearer capability).
             // randomUUID is the floor; Math.random is a fallback for old browsers.
-            this.sessionId = sessionStorage.getItem('snow_chat_session') ||
+            const existingSession = sessionStorage.getItem('snow_chat_session');
+            this.sessionId = existingSession ||
                 ('sess_' + ((self.crypto && self.crypto.randomUUID)
                     ? self.crypto.randomUUID()
                     : (Date.now().toString(36) + Math.random().toString(36).slice(2, 12))));
             sessionStorage.setItem('snow_chat_session', this.sessionId);
+            // Fresh session: the first message may need a Turnstile token.
+            if (!existingSession) sessionStorage.removeItem('snow_chat_started');
 
             this.leadData = this.loadLeadData();
             this.history = this.loadHistory();
@@ -748,16 +751,116 @@
             return hp;
         }
 
+        // ---- Cloudflare Turnstile (anti-bot Layer 2) ----
+        // Fully inert unless the server advertises a site key via
+        // /api/chat/config. A token is only needed for the FIRST message of a
+        // new conversation; established conversations are never re-challenged.
+
+        async fetchChatConfig() {
+            if (this._chatConfig !== undefined) return this._chatConfig;
+            try {
+                const base = CONFIG.apiUrl.replace(/\/api\/chat$/, '');
+                const res = await fetch(base + '/api/chat/config');
+                this._chatConfig = res.ok ? await res.json() : null;
+            } catch (_e) {
+                this._chatConfig = null;
+            }
+            return this._chatConfig;
+        }
+
+        loadTurnstileScript() {
+            if (window.turnstile) return Promise.resolve();
+            if (this._tsScriptPromise) return this._tsScriptPromise;
+            this._tsScriptPromise = new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+                s.async = true;
+                s.onload = resolve;
+                s.onerror = () => reject(new Error('turnstile script failed'));
+                document.head.appendChild(s);
+            });
+            return this._tsScriptPromise;
+        }
+
+        async getTurnstileToken(forceFresh) {
+            const cfg = await this.fetchChatConfig();
+            const siteKey = cfg && cfg.turnstileSiteKey;
+            if (!siteKey) return null; // dormant: nothing to do
+            try {
+                await this.loadTurnstileScript();
+            } catch (_e) {
+                return null;
+            }
+            if (!window.turnstile) return null;
+            return new Promise((resolve) => {
+                const timer = setTimeout(() => { this._tsResolve = null; resolve(null); }, 12000);
+                this._tsResolve = (t) => { clearTimeout(timer); this._tsResolve = null; resolve(t); };
+                try {
+                    if (this._tsWidgetId !== undefined && forceFresh) {
+                        window.turnstile.reset(this._tsWidgetId);
+                    } else if (this._tsWidgetId === undefined) {
+                        // interaction-only: invisible unless Cloudflare decides a
+                        // visible challenge is needed, which renders in the
+                        // message area rather than floating over the host page.
+                        let el = document.getElementById('snow-ts-container');
+                        if (!el) {
+                            el = document.createElement('div');
+                            el.id = 'snow-ts-container';
+                            (this.messages || document.body).appendChild(el);
+                        }
+                        this._tsWidgetId = window.turnstile.render(el, {
+                            sitekey: siteKey,
+                            appearance: 'interaction-only',
+                            callback: (token) => { if (this._tsResolve) this._tsResolve(token); },
+                            'error-callback': () => { if (this._tsResolve) this._tsResolve(null); },
+                        });
+                    }
+                } catch (_e) {
+                    if (this._tsResolve) this._tsResolve(null);
+                }
+            });
+        }
+
+        postChatMessage(message, turnstileToken) {
+            return fetch(CONFIG.apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: this.sessionId,
+                    message,
+                    leadData: this.leadData,
+                    ...(turnstileToken ? { turnstileToken } : {}),
+                    ...this.readHoneypots()
+                })
+            });
+        }
+
         async getAIResponse(message) {
             this.isTyping = true;
             this.showTyping();
             try {
-                const res = await fetch(CONFIG.apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId: this.sessionId, message, leadData: this.leadData, ...this.readHoneypots() })
-                });
+                // First message of a new conversation may need a Turnstile
+                // token (null whenever the feature is dormant server-side).
+                let turnstileToken = null;
+                if (!sessionStorage.getItem('snow_chat_started')) {
+                    turnstileToken = await this.getTurnstileToken(false);
+                }
+
+                let res = await this.postChatMessage(message, turnstileToken);
+
+                // Server demanded verification (token missing or expired):
+                // retry once with a freshly minted token.
+                if (res.status === 403) {
+                    const errBody = await res.clone().json().catch(() => ({}));
+                    if (errBody.error === 'verification_required') {
+                        const fresh = await this.getTurnstileToken(true);
+                        res = await this.postChatMessage(message, fresh);
+                    }
+                }
+
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
+                sessionStorage.setItem('snow_chat_started', '1');
                 if (data.leadData) {
                     this.leadData = { ...this.leadData, ...data.leadData };
                     this.saveLeadData();

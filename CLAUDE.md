@@ -126,8 +126,11 @@ Layered gates on the public chat endpoint (config block `spamGuard` + `rateLimit
 2. **Junk detector** (`server/services/junkDetector.js`) - gibberish heuristics run before any API call. Strike system: canned reply per junk message, 3 strikes sets `intent=bot_junk` (a `BLOCKED_INTENTS` member) and shadow-bans the session with a static reply. Keep new rules high-precision; a false positive costs a real lead.
 3. **Rate limits** - 8/min per IP + 80/day per IP (`DAILY_IP_MAX`), in-memory.
 4. **Daily circuit breaker** - `DAILY_CLAUDE_CALL_LIMIT` (default 400) caps total chat Claude calls/day; past it visitors get a canned email pointer and one Discord alert fires.
+5. **Cloudflare Turnstile (Layer 2, DORMANT)** - activates when `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` env vars are set (no code change). Server verifies a token once per NEW conversation (`services/turnstileService.js`, fails open only on a Cloudflare outage); the widget auto-discovers the site key via `GET /api/chat/config` and retries once on `verification_required`.
 
-Signal events: junk strikes log as `bot_dropped` with label `junk`/`junk_banned`.
+Signal events: junk strikes log as `bot_dropped` with label `junk`/`junk_banned`/`turnstile`. Analytics/stats/health count humans only (`intent != 'bot_junk'`); the excluded count is reported as `stats.conversations.bot_junk`. Historical junk was re-tagged by the one-time `retro_junk_sweep_2026_07` boot migration (reversible via `intent_source='retro_junk_sweep'`).
+
+Canned-reply paths (keyword deflection, junk strikes, shadow-ban, budget breaker) MUST return `messageId` in the JSON payload - it advances the widget's poll cursor; omitting it makes the poll loop render the reply twice.
 
 ## Important Patterns
 

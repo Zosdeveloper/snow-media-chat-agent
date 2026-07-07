@@ -163,6 +163,18 @@ const config = {
         dailyClaudeCallLimit: parseInt(process.env.DAILY_CLAUDE_CALL_LIMIT, 10) || 400,
     },
 
+    // Cloudflare Turnstile (anti-bot Layer 2). DORMANT until both env vars are
+    // set: the widget's config fetch returns a null site key and the server
+    // skips verification entirely. When enabled, the server verifies a token
+    // once per NEW conversation (first message only); established
+    // conversations are never re-challenged. Verification fails open if
+    // Cloudflare itself is unreachable, so a CF outage can't kill chat.
+    turnstile: {
+        siteKey: process.env.TURNSTILE_SITE_KEY || null,
+        secretKey: process.env.TURNSTILE_SECRET_KEY || null,
+        enabled: !!(process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET_KEY),
+    },
+
     // CORS
     allowedOrigins: [
         'https://thesnowmedia.com',

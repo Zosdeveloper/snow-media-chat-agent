@@ -1431,6 +1431,9 @@ function isConversationConverted(conversationId) {
 function getStats() {
     const db = getDb();
 
+    // Headline numbers count humans only; bot-gibberish conversations
+    // (intent = 'bot_junk') are reported separately so the noise is visible
+    // but never skews the funnel.
     const conversationStats = db.prepare(`
         SELECT
             COUNT(*) as total,
@@ -1443,7 +1446,12 @@ function getStats() {
             SUM(CASE WHEN lead_email IS NOT NULL OR lead_phone IS NOT NULL THEN 1 ELSE 0 END) as with_contact,
             AVG(message_count) as avg_messages
         FROM conversations
+        WHERE (intent IS NULL OR intent != 'bot_junk')
     `).get();
+
+    const junkCount = db.prepare(
+        `SELECT COUNT(*) as count FROM conversations WHERE intent = 'bot_junk'`
+    ).get();
 
     const patternStats = db.prepare(`
         SELECT COUNT(*) as total, AVG(confidence_score) as avg_confidence
@@ -1451,9 +1459,61 @@ function getStats() {
     `).get();
 
     return {
-        conversations: conversationStats,
+        conversations: { ...conversationStats, bot_junk: junkCount.count },
         patterns: patternStats
     };
+}
+
+/**
+ * One-time retroactive sweep (2026-07-07): tag historical bot-gibberish
+ * conversations as intent = 'bot_junk' so analytics reflect humans. Runs once
+ * per environment, recorded in _migrations. Conservative on purpose: only
+ * NULL-intent conversations with no contact info and no booking, where at
+ * least half the user messages trip the junk detector. Fully reversible:
+ *   UPDATE conversations SET intent=NULL, intent_confidence=NULL, intent_source=NULL
+ *   WHERE intent_source = 'retro_junk_sweep';
+ * checkFn is injected (junkDetector.checkMessage) to keep db.js free of
+ * service-layer requires.
+ */
+function runRetroJunkSweep(checkFn) {
+    const db = getDb();
+    const MIGRATION = 'retro_junk_sweep_2026_07';
+    const alreadyRun = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(MIGRATION);
+    if (alreadyRun) return null;
+
+    const candidates = db.prepare(`
+        SELECT id FROM conversations
+        WHERE intent IS NULL
+          AND lead_email IS NULL AND lead_phone IS NULL
+          AND (booking_confirmed IS NULL OR booking_confirmed = 0)
+    `).all();
+
+    const getUserMessages = db.prepare(
+        `SELECT content FROM messages WHERE conversation_id = ? AND role = 'user'`
+    );
+    const tag = db.prepare(`
+        UPDATE conversations
+        SET intent = 'bot_junk', intent_confidence = 0.9, intent_source = 'retro_junk_sweep'
+        WHERE id = ?
+    `);
+
+    let tagged = 0;
+    db.transaction(() => {
+        for (const { id } of candidates) {
+            const msgs = getUserMessages.all(id);
+            if (msgs.length === 0) continue;
+            const junkCount = msgs.filter(
+                m => typeof m.content === 'string' && checkFn(m.content).junk
+            ).length;
+            if (junkCount >= 1 && junkCount / msgs.length >= 0.5) {
+                tag.run(id);
+                tagged++;
+            }
+        }
+        db.prepare('INSERT INTO _migrations (name) VALUES (?)').run(MIGRATION);
+    })();
+
+    return { examined: candidates.length, tagged };
 }
 
 /**
@@ -1563,6 +1623,7 @@ module.exports = {
 
     // Utility
     getStats,
+    runRetroJunkSweep,
     pruneOldData,
     close
 };
