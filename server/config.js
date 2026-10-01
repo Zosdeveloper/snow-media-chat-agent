@@ -44,6 +44,22 @@ const config = {
         classifier: process.env.CLASSIFIER_EFFORT || 'low',
     },
 
+    // How the chat model thinks. 'adaptive' (default) lets it think before it
+    // answers; it then calls its tools first and writes the reply after, which
+    // costs a second request on any turn that uses a tool. 'between_tools' turns
+    // extended thinking off: the reply is written first and tools follow in the
+    // same response, so a turn is one request. Sonnet 5.5 only.
+    modelThinking: {
+        chat: process.env.CHAT_THINKING || 'adaptive',
+    },
+
+    // Reply length contract. The system prompt asks for it; the output guardrail
+    // logs every reply that breaks it (guardrail_events, pattern 'reply_too_long').
+    reply: {
+        maxSentences: 2,
+        maxWords: 45,
+    },
+
     // Published per-million-token pricing, used only to estimate dashboard cost.
     // Update here when Anthropic pricing changes. cacheRead ~= 0.1x input,
     // cacheWrite (5-min ephemeral) ~= 1.25x input. Entries for models no longer
@@ -59,6 +75,7 @@ const config = {
         model: 'voyage-3-lite',
         dimensions: 512, // voyage-3-lite outputs 512 dimensions
         batchSize: 128,  // Max texts per API call
+        queryTimeoutMs: 3000, // Ceiling on the per-reply query embedding (reply path)
     },
 
     // RAG settings
@@ -113,7 +130,9 @@ const config = {
         fromName: 'Milos | The Snow Media',
         checkIntervalMs: 30 * 60 * 1000,    // Check every 30 minutes
         dailyLimit: 95,                       // Stay under SendGrid free tier 100/day
-        calendlyUrl: 'https://calendly.com/milos-thesnowmedia/strategy-call',
+        // Must be a live Calendly event: every follow-up email links to it. This is
+        // the same event the chat widget opens (CONFIG.calendlyUrl in the widgets).
+        calendlyUrl: 'https://calendly.com/milos-thesnowmedia/30min',
         sequence: [
             { delayMinutes: 45, type: 'recap' },       // Email 1: 45 min after last message
             { delayMinutes: 24 * 60, type: 'case_study' },  // Email 2: 24 hours

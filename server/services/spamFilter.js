@@ -38,7 +38,7 @@ const KEYWORD_RULES = [
             /\bcareer(?:s)?\s+(?:page|opportunit|opening)/i,
             /\bentry[\s-]level\s+position/i,
         ],
-        response: "Appreciate the interest, but we aren't hiring right now. When we are, openings get posted on our LinkedIn. Good luck with the search.",
+        response: "Appreciate the interest, but we aren't hiring right now. Openings get posted on our LinkedIn when we are, so good luck with the search.",
     },
     {
         intent: 'link_spam',
@@ -86,7 +86,7 @@ const KEYWORD_RULES = [
             /\b(?:i'?m|i\s+am)\s+(?:a\s+)?(?:student|phd\s+candidate|researcher)\s+(?:writing|studying|researching)/i,
             /\bcould\s+(?:you|i)\s+interview\s+you\s+for\s+(?:my|a)\s+(?:paper|research|class)/i,
         ],
-        response: "Appreciate the interest. We don't do academic interviews through the chat, but Milos has written publicly about agency work on LinkedIn if that helps. Good luck with the project.",
+        response: "We don't do academic interviews through the chat, but the blog on thesnowmedia.com covers how we work. Good luck with the project.",
     },
 ];
 

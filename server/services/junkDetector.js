@@ -35,6 +35,13 @@ function checkMessage(message) {
     const alnum = trimmed.replace(/[^\p{L}\p{N}]/gu, '');
     if (alnum.length === 0) return { junk: true, reason: 'no_content' };
 
+    // Contact details are the most valuable thing a visitor can type, and a
+    // consonant-heavy address ("jsmth@brwnplmbng.com") reads like keyboard mash
+    // to the checks below. A message carrying an email or phone is never junk.
+    if (/[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i.test(trimmed) || /\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(trimmed)) {
+        return { junk: false };
+    }
+
     // Same character flooded: "aaaaaaaa", "!!!!!!!!". Threshold 7 so a human
     // "hmmmmmm" / "soooooo" (typically <= 6) survives.
     if (/(.)\1{6,}/.test(trimmed)) return { junk: true, reason: 'char_flood' };
@@ -82,7 +89,7 @@ function checkMessage(message) {
  */
 const STRIKE_REPLIES = [
     "Didn't quite catch that, looks like it might have been a typo. What's going on with your marketing right now?",
-    "Still not following you. If you're checking whether this chat is real, it is. What kind of business are you running?",
+    "Still not following you, and if you're checking whether this chat is real, it is. What kind of business are you running?",
 ];
 
 // Static reply once a session is shadow-banned. Deliberately bland and

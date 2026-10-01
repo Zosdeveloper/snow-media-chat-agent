@@ -101,7 +101,10 @@ async function generateQueryEmbedding(query) {
                 input: [text],
                 model: config.embedding.model,
                 input_type: 'query' // Optimized for similarity search
-            })
+            }),
+            // This runs before every chat reply. Without a ceiling a slow Voyage
+            // stalls the visitor; on timeout the reply simply goes out without RAG.
+            signal: AbortSignal.timeout(config.embedding.queryTimeoutMs)
         });
 
         if (!response.ok) {

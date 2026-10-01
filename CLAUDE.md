@@ -10,7 +10,7 @@ AI-powered sales chat widget for The Snow Media marketing agency. The chat agent
 
 - **Backend**: Node.js + Express.js (all code in `server/`)
 - **Database**: SQLite (better-sqlite3) with sqlite-vec extension for vector search
-- **AI**: Claude API (claude-sonnet-5-5 for every role: chat, summarizer, follow-up emails, intent classifier; set in `config.models`, effort in `config.modelEffort`)
+- **AI**: Claude API (claude-sonnet-5-5 for every role: chat, summarizer, follow-up emails, intent classifier; set in `config.models`, effort in `config.modelEffort`, chat thinking mode in `config.modelThinking`)
 - **Embeddings**: Voyage AI (voyage-3-lite, 512 dimensions) for RAG similarity search
 - **Deployment**: Railway (auto-deploy from GitHub `master`)
 
@@ -22,9 +22,12 @@ cd server
 npm install
 npm run dev          # nodemon hot reload on localhost:3000
 npm start            # production: node server.js
+npm run eval         # deterministic guardrail checks, no API calls
+node eval/run-eval.mjs     # rule contract + outcomes, 10 scenarios, real API calls
+node eval/sales-eval.mjs   # 18 tough buyers, real API calls
 ```
 
-No test suite exists. No linter configured.
+No unit test framework and no linter. The three eval layers above are the test suite: see `server/eval/README.md`. Run both behavioral evals after any change to the system prompt, the knowledge base, or the chat call.
 
 ## Environment Variables
 
@@ -43,9 +46,9 @@ Required in `server/.env` (see `server/.env.example`):
 2. Persist conversation + message to SQLite
 3. RAG: embed current context via Voyage AI, find similar successful patterns via sqlite-vec
 4. `promptBuilder` enriches system prompt with RAG examples + lead context + stage guidance
-5. Claude generates response (max_tokens 2000, which includes thinking headroom)
-6. Parse special tokens (`[BOOK_CALL]`, `[QUICK_REPLIES: ...]`) from response
-7. Extract lead data (name/email/phone) from user message via regex
+5. Claude generates the reply as structured output (`REPLY_FORMAT` in server.js): two sentence slots plus booking reason, quick replies, and lead fields. One request per turn, no tools. max_tokens 2000 includes thinking headroom. A 400 on the structured request retries once as plain text.
+6. Server joins the two slots into the message; `[BOOK_CALL]` in the text shows the booking button
+7. Lead data: regex extraction runs right after the user message is saved (before any canned-reply early return), then the model's `lead` fields are merged in
 8. Auto-tagger evaluates if conversation qualifies as a saveable pattern
 
 ### Key Files
@@ -68,7 +71,9 @@ Required in `server/.env` (see `server/.env.example`):
 
 Special tokens in AI responses:
 - `[BOOK_CALL]` - Renders Calendly booking button
-- `[QUICK_REPLIES: "Option 1", "Option 2"]` - Renders quick reply buttons
+- `[QUICK_REPLIES: "Option 1", "Option 2"]` - Legacy token, only parsed on the plain-text fallback path. Quick replies normally arrive in the `quickReplies` field.
+
+The live WordPress site loads `embed-ai.js` (theme footer). `chat-agent-ai.js` only powers the demo page on the Railway domain. The root-level copies of both files must stay byte-identical to `server/public/`.
 
 ### Static Serving
 
@@ -136,5 +141,8 @@ Canned-reply paths (keyword deflection, junk strikes, shadow-ban, budget breaker
 
 - CORS whitelist in `config.js` - add new domains there, not in server.js. The origin gate reuses the same list, so a new embed domain only needs adding once.
 - Output validation in the chat endpoint flags suspicious AI responses (unrealistic percentages, guarantee language, specific pricing)
+- Reply length contract: two sentences per message (`config.reply`). Held by the two sentence slots plus the system prompt; every miss is logged to `guardrail_events` as `reply_too_long`. The eval harnesses use the same sentence counter (`guardrails.countSentences`).
+- The agent cannot see the calendar: the prompt forbids naming a day or time. Keep it that way unless real availability is wired in.
+- Knowledge base case studies (`services/knowledgeBase.js`) are checked line by line against the live case study pages. Keep a title stable and edit only the context, or the old seed row is left behind in the database.
 - Lead data extraction uses regex patterns in `extractLeadData()` in server.js - name detection requires explicit introduction phrases to avoid false positives
 - All DB writes in the chat flow are fire-and-forget (caught errors logged but don't block response)

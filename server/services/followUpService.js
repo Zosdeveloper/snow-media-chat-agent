@@ -256,7 +256,7 @@ Respond in this exact JSON format:
         }
 
         // Add unsubscribe footer to each email
-        const footer = `<p style="color:#999;font-size:12px;margin-top:30px;">Milos Petrovic | The Snow Media<br>Hit reply if you have any questions.<br><a href="mailto:${config.followUp.fromEmail}?subject=Unsubscribe" style="color:#999;">Unsubscribe</a></p>`;
+        const footer = `<p style="color:#999;font-size:12px;margin-top:30px;">Milos Vranes | The Snow Media<br>Hit reply if you have any questions.<br><a href="mailto:${config.followUp.fromEmail}?subject=Unsubscribe" style="color:#999;">Unsubscribe</a></p>`;
 
         return emails.map(e => ({
             subject: e.subject,
@@ -275,7 +275,7 @@ Respond in this exact JSON format:
 function getTemplateEmails(conversation, calendlyUrl) {
     const name = conversation.lead_name;
     const greeting = name ? `<p>Hey ${name},</p>` : '<p>Hey,</p>';
-    const footer = `<p style="color:#999;font-size:12px;margin-top:30px;">Milos Petrovic | The Snow Media<br>Hit reply if you have any questions.<br><a href="mailto:${config.followUp.fromEmail}?subject=Unsubscribe" style="color:#999;">Unsubscribe</a></p>`;
+    const footer = `<p style="color:#999;font-size:12px;margin-top:30px;">Milos Vranes | The Snow Media<br>Hit reply if you have any questions.<br><a href="mailto:${config.followUp.fromEmail}?subject=Unsubscribe" style="color:#999;">Unsubscribe</a></p>`;
 
     return [
         {

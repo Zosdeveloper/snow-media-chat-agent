@@ -77,6 +77,16 @@ function formatExamples(patterns) {
 }
 
 /**
+ * Everything below is injected into the SYSTEM block, and several inputs come
+ * straight from the browser (lead fields, page URL, UTM values). Keep each to
+ * one short line of plain text so a crafted value cannot pose as an instruction.
+ */
+function clean(value, maxLength = 120) {
+    if (typeof value !== 'string' && typeof value !== 'number') return '';
+    return String(value).replace(/[[\]<>\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+/**
  * Build context string for lead data
  * @param {Object} leadData - Captured lead information
  * @returns {string} - Formatted context string
@@ -85,25 +95,17 @@ function buildLeadContext(leadData) {
     if (!leadData) return '';
 
     const parts = [];
+    const add = (label, value, maxLength) => {
+        const v = clean(value, maxLength);
+        if (v) parts.push(`${label}: ${v}`);
+    };
 
-    if (leadData.name) {
-        parts.push(`Name: ${leadData.name}`);
-    }
-    if (leadData.email) {
-        parts.push(`Email: ${leadData.email}`);
-    }
-    if (leadData.phone) {
-        parts.push(`Phone: ${leadData.phone}`);
-    }
-    if (leadData.businessType || leadData.business) {
-        parts.push(`Business Type: ${leadData.businessType || leadData.business}`);
-    }
-    if (leadData.monthlyBudget) {
-        parts.push(`Monthly Budget: ${leadData.monthlyBudget}`);
-    }
-    if (leadData.currentChallenges) {
-        parts.push(`Challenges: ${leadData.currentChallenges}`);
-    }
+    add('Name', leadData.name, 60);
+    add('Email', leadData.email, 120);
+    add('Phone', leadData.phone, 40);
+    add('Business Type', leadData.businessType || leadData.business);
+    add('Monthly Budget', leadData.monthlyBudget, 40);
+    add('Challenges', leadData.currentChallenges, 200);
 
     if (parts.length === 0) return '';
 
@@ -116,10 +118,15 @@ function buildLeadContext(leadData) {
  * @returns {string}
  */
 function buildPageContext(pageContext) {
-    if (!pageContext || !pageContext.url) return '';
+    if (!pageContext || typeof pageContext.url !== 'string' || !pageContext.url) return '';
 
-    const url = pageContext.url.toLowerCase();
-    let pageType = 'homepage';
+    const safeUrl = clean(pageContext.url, 200);
+    const url = safeUrl.toLowerCase();
+    // Only the root path is the homepage. Blog posts live at root-level slugs,
+    // so an unrecognized path is just a site page, not the homepage.
+    let path = url;
+    try { path = new URL(url).pathname; } catch (_e) { /* keep the raw string */ }
+    let pageType = (path === '/' || path === '') ? 'homepage' : 'site page';
     let hint = '';
 
     if (url.includes('/services/google-ads')) {
@@ -157,7 +164,7 @@ function buildPageContext(pageContext) {
         hint = 'They are browsing services. Ask which one caught their eye.';
     } else if (url.includes('/case-studies')) {
         pageType = 'case studies page';
-        hint = 'They are looking at results. High intent. Reference specific case studies.';
+        hint = 'They are looking at results. High intent. Cite a case study only if one is in approved_facts.';
     } else if (url.includes('/pricing') || url.includes('/plans')) {
         pageType = 'pricing page';
         hint = 'High intent. They are evaluating cost. Help them see value, pivot to a call.';
@@ -172,11 +179,10 @@ function buildPageContext(pageContext) {
         hint = 'They are evaluating the team. Mention Snow founded the agency, senior team, boutique model.';
     } else if (url.includes('/resources') || url.includes('/ai-tools')) {
         pageType = 'resources page';
-        hint = 'They are looking at free resources. Offer to send a relevant one to their email.';
+        hint = 'They are looking at free resources. Point them to the one that fits their situation, then find out what they are trying to fix.';
     }
 
-    let result = `\n[PAGE: ${pageType} (${pageContext.url}). ${hint}]`;
-    return result;
+    return `\n[PAGE: ${pageType} (${safeUrl}). ${hint}]`;
 }
 
 /**
@@ -188,22 +194,26 @@ function buildUtmContext(utmParams) {
     if (!utmParams) return '';
 
     const parts = [];
+    const utmSource = clean(utmParams.utm_source, 60);
+    const utmMedium = clean(utmParams.utm_medium, 60);
+    const utmCampaign = clean(utmParams.utm_campaign, 80);
+    const utmTerm = clean(utmParams.utm_term, 80);
 
-    if (utmParams.utm_source) parts.push(`Source: ${utmParams.utm_source}`);
-    if (utmParams.utm_medium) parts.push(`Medium: ${utmParams.utm_medium}`);
-    if (utmParams.utm_campaign) parts.push(`Campaign: ${utmParams.utm_campaign}`);
-    if (utmParams.utm_term) parts.push(`Search term: ${utmParams.utm_term}`);
+    if (utmSource) parts.push(`Source: ${utmSource}`);
+    if (utmMedium) parts.push(`Medium: ${utmMedium}`);
+    if (utmCampaign) parts.push(`Campaign: ${utmCampaign}`);
+    if (utmTerm) parts.push(`Search term: ${utmTerm}`);
 
     if (parts.length === 0) return '';
 
     let hint = '';
-    const source = (utmParams.utm_source || '').toLowerCase();
-    const medium = (utmParams.utm_medium || '').toLowerCase();
+    const source = utmSource.toLowerCase();
+    const medium = utmMedium.toLowerCase();
 
     if (medium === 'cpc' || medium === 'ppc') {
         hint = 'This visitor came from a paid ad. They clicked on an ad to get here, so they have active intent.';
-        if (utmParams.utm_term) {
-            hint += ` They searched for "${utmParams.utm_term}". Reference this topic naturally.`;
+        if (utmTerm) {
+            hint += ` They searched for "${utmTerm}". Reference this topic naturally.`;
         }
     } else if (source === 'facebook' || source === 'instagram' || source === 'meta') {
         hint = 'Visitor came from social media. They saw our content and clicked through.';
@@ -305,7 +315,7 @@ function buildVariantContext(variant) {
     // Variant A: standard opener (control)
     // Variant B: value-first opener (test)
     if (variant === 'B') {
-        return '\n[VARIANT B: For your first message, lead with a specific value offer. Example: "Hey, I just helped a [industry] business cut their CPA by 40%. What kind of business do you run?" Make it about them seeing a result, not about you.]';
+        return '\n[VARIANT B: For your first message, lead with value. If approved_facts has a result from their niche, open with that one result in a single sentence, then ask your question. If it has nothing for their niche, open normally. Never make up a result.]';
     }
 
     return ''; // Variant A = default behavior (no extra instruction)

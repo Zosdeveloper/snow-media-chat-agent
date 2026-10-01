@@ -92,6 +92,51 @@ function checkOutput(message) {
 }
 
 // ============================================
+// REPLY LENGTH (chat flow + eval harness)
+// ============================================
+
+/**
+ * Count sentences the way a reader would. A naive split on [.!?] counts the
+ * dots inside "2.1", "thesnowmedia.com", "dana@peakhvac.com" and "e.g." as
+ * sentence ends, so those are neutralized first. Tokens ([BOOK_CALL]) are not
+ * part of what the visitor reads and are dropped.
+ */
+function countSentences(text) {
+    const cleaned = String(text || '')
+        .replace(/\[BOOK_CALL\]/g, ' ')
+        .replace(/\[QUICK_REPLIES:.*?\]/g, ' ')
+        .replace(/https?:\/\/\S*[^\s.,!?)]/g, 'link')
+        .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, 'email')
+        .replace(/\.{2,}/g, ' ')
+        .replace(/(\d)[.,](\d)/g, '$1$2')
+        .replace(/\b(e\.g|i\.e|vs|etc|approx|a\.m|p\.m|u\.s|u\.k)\./gi, '$1')
+        .replace(/\b(?:[\w-]+\.)+(?:com|co|io|net|org|ai)\b/gi, 'domain')
+        .trim();
+    if (!cleaned) return 0;
+    return cleaned.split(/[.!?]+(?=\s|$)/).map(s => s.trim()).filter(s => /[\p{L}\p{N}]/u.test(s)).length;
+}
+
+function countWords(text) {
+    return String(text || '')
+        .replace(/\[BOOK_CALL\]/g, ' ')
+        .replace(/\[QUICK_REPLIES:.*?\]/g, ' ')
+        .split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Check a reply against the length contract (config.reply). Returns
+ * { ok, sentences, words, reason } where reason names the first limit broken.
+ */
+function checkLength(text, { maxSentences, maxWords }) {
+    const sentences = countSentences(text);
+    const words = countWords(text);
+    let reason = null;
+    if (maxSentences && sentences > maxSentences) reason = `${sentences} sentences (max ${maxSentences})`;
+    else if (maxWords && words > maxWords) reason = `${words} words (max ${maxWords})`;
+    return { ok: !reason, sentences, words, reason };
+}
+
+// ============================================
 // PROMPT INJECTION DETECTION
 // ============================================
 
@@ -159,26 +204,56 @@ function extractLeadData(message, existingData = {}) {
     }
 
     // Name detection - only when explicitly introduced
-    if (!existingData.name && message.length < 100 && !emailMatch && !phoneMatch) {
-        const namePatterns = [
-            /(?:i'?m|i am|my name is|my name's|this is|it's|call me|the name is|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
-            /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+here\b/i,  // "John here"
-            /^(?:hey,?\s+)?([A-Z][a-z]+)\s+(?:speaking|from)/i  // "John speaking" or "John from XYZ"
-        ];
-
-        for (const pattern of namePatterns) {
-            const nameMatch = message.match(pattern);
-            if (nameMatch) {
-                const potentialName = nameMatch[1].trim();
-                if (!COMMON_WORDS.includes(potentialName.toLowerCase()) && potentialName.length >= 2) {
-                    extracted.name = potentialName;
-                    break;
-                }
-            }
-        }
+    if (!existingData.name && message.length < 160) {
+        const name = extractName(message);
+        if (name) extracted.name = name;
     }
 
     return extracted;
+}
+
+// Words that follow "I'm" / "it's" / "this is" far more often than a name does.
+const NOT_A_NAME = new Set([
+    ...COMMON_WORDS,
+    'a', 'an', 'in', 'on', 'at', 'to', 'of', 'with', 'about', 'from', 'based', 'new', 'still', 'also', 'so', 'too', 'very', 'really',
+    'spending', 'running', 'trying', 'thinking', 'getting', 'going', 'doing', 'using', 'currently', 'already', 'always', 'never',
+    'owner', 'founder', 'ceo', 'busy', 'fine', 'glad', 'sorry', 'done', 'ready', 'open', 'happy', 'curious', 'wondering',
+    'no', 'this', 'it', 'we', 'my', 'your', 'maybe', 'back', 'later', 'tomorrow', 'today',
+    'google', 'meta', 'facebook', 'shopify', 'amazon', 'linkedin', 'microsoft', 'tiktok', 'instagram',
+    'greetings', 'cheers', 'regards', 'best'
+]);
+
+/**
+ * Pull a name out of a message, or return null.
+ *
+ * Two tiers. After a strong introduction ("my name is ...") the next word or
+ * two are the name however they are typed. After a weak one ("I'm ...",
+ * "it's ...", "this is ...", "call me ...") only a Capitalized word counts,
+ * because "I'm based in Denver" and "it's too expensive" are not names. The
+ * old single case-insensitive pattern stored "based in" and "too expensive"
+ * as lead names.
+ */
+function extractName(message) {
+    const candidates = [];
+    const strong = message.match(/\b(?:my name is|my name's|the name is|name's)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*)?)/i);
+    if (strong) candidates.push(strong[1]);
+    const weak = message.match(/\b(?:[Ii]'?m|[Ii] am|[Tt]his is|[Ii]t'?s|[Cc]all me)\s+([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+)?)/);
+    if (weak) candidates.push(weak[1]);
+    const signOff = message.match(/^(?:[Hh]ey,?\s+)?([A-Z][a-z]+)\s+(?:here|speaking|from)\b/);
+    if (signOff) candidates.push(signOff[1]);
+
+    for (const candidate of candidates) {
+        // Keep the leading run of words that could be a name ("john on the account" -> nothing, "john smith" -> both).
+        const words = [];
+        for (const word of candidate.trim().split(/\s+/)) {
+            // Acronyms ("HVAC", "ROAS") are not names either.
+            const acronym = word.length >= 3 && word === word.toUpperCase();
+            if (word.length < 2 || acronym || NOT_A_NAME.has(word.toLowerCase())) break;
+            words.push(word[0].toUpperCase() + word.slice(1));
+        }
+        if (words.length > 0) return words.join(' ');
+    }
+    return null;
 }
 
 module.exports = {
@@ -186,6 +261,9 @@ module.exports = {
     voiceGate,
     SUSPICIOUS_PATTERNS,
     checkOutput,
+    countSentences,
+    countWords,
+    checkLength,
     detectPromptInjection,
     extractLeadData,
 };

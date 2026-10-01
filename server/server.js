@@ -210,6 +210,69 @@ function isValidId(v) {
     return typeof v === 'string' && ID_PATTERN.test(v);
 }
 
+// The widget replays its stored lead data with every message. Take only the
+// known fields and only real values: an empty string must not blank out contact
+// info captured earlier, and a malformed email must never become the lead's.
+const CLIENT_LEAD_FIELDS = { name: 80, email: 200, phone: 40, businessType: 120, business: 120 };
+function sanitizeClientLead(leadData) {
+    const clean = {};
+    if (!leadData || typeof leadData !== 'object') return clean;
+    for (const [field, maxLength] of Object.entries(CLIENT_LEAD_FIELDS)) {
+        const value = leadData[field];
+        if (typeof value !== 'string') continue;
+        const trimmed = value.trim().slice(0, maxLength);
+        if (!trimmed) continue;
+        if (field === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) continue;
+        clean[field] = trimmed;
+    }
+    return clean;
+}
+
+// Shape of every chat reply (structured output). Two sentence slots hold the
+// two-sentence rule by construction; the other fields carry what used to be
+// three tool calls (booking attribution, quick replies, lead capture).
+const BOOKING_REASONS = ['explicit_request', 'qualification_complete', 'warm_visitor_shortcut'];
+const REPLY_FORMAT = {
+    type: 'json_schema',
+    schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['sentence_1', 'sentence_2', 'booking_reason', 'quick_replies', 'lead'],
+        properties: {
+            sentence_1: {
+                type: 'string',
+                description: 'First sentence of your reply to the visitor. One short sentence: aim for 15 words, 25 at most.'
+            },
+            sentence_2: {
+                type: 'string',
+                description: 'Second and last sentence, or an empty string when one sentence is enough. One short sentence: aim for 15 words, 25 at most. When you close, this is the email ask and it ends with [BOOK_CALL].'
+            },
+            booking_reason: {
+                type: 'string',
+                enum: ['none', ...BOOKING_REASONS],
+                description: 'none unless this reply contains [BOOK_CALL]. explicit_request = visitor asked to book or agreed after you offered. qualification_complete = you confirmed need, timing, and authority-like signals before offering. warm_visitor_shortcut = their first one or two messages showed clear buying intent and you skipped discovery.'
+            },
+            quick_replies: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Usually empty. 2-3 tap-to-reply options, max 4 words each, only at a real fork with distinct paths. Never with [BOOK_CALL], never two turns in a row.'
+            },
+            lead: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['name', 'email', 'phone', 'business_type'],
+                description: 'Details the visitor gave in their CURRENT message. Fill in every one this message states and leave the rest as empty strings. This is what reaches the CRM, so do not skip one that is there.',
+                properties: {
+                    name: { type: 'string', description: 'Their name, if this message gives it.' },
+                    email: { type: 'string', description: 'Their email address, if this message gives it.' },
+                    phone: { type: 'string', description: 'Their phone number, if this message gives it.' },
+                    business_type: { type: 'string', description: 'What kind of business they run, in a few words, when this message says it ("HVAC company", "DTC skincare brand", "med spa"). Not a guess from context.' }
+                }
+            }
+        }
+    }
+};
+
 // Chat endpoint with origin gate + rate limiting (per-minute and per-day)
 app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (req, res) => {
     try {
@@ -284,7 +347,7 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
 
                 session = {
                     messages: [],
-                    leadData: leadData || {},
+                    leadData: {},
                     pageContext: pageContext || {},
                     utmParams: utmParams || null,
                     visitorId: safeVisitorId,
@@ -311,7 +374,7 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
 
         // Update session
         session.lastActivity = Date.now();
-        session.leadData = { ...session.leadData, ...leadData };
+        session.leadData = { ...session.leadData, ...sanitizeClientLead(leadData) };
         if (pageContext) session.pageContext = pageContext;
         if (utmParams) session.utmParams = utmParams;
         if (safeVisitorId) session.visitorId = safeVisitorId;
@@ -368,6 +431,20 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
         } catch (err) {
             console.error('Error persisting user message:', err.message);
             alerts.databaseError(err, { sessionId, op: 'addMessage:user' });
+        }
+
+        // Regex lead capture runs here, before any early return, so an email or
+        // phone typed on a canned-reply path (junk strike, spend breaker, model
+        // outage, human takeover) is still saved. The model's lead fields and
+        // the second pass after the reply fill in whatever this misses.
+        try {
+            const early = guardrails.extractLeadData(message, session.leadData);
+            if (Object.keys(early).length > 0) {
+                session.leadData = { ...session.leadData, ...early };
+                db.updateConversationLeadData(sessionId, session.leadData);
+            }
+        } catch (err) {
+            console.error('Early lead extract error:', err.message);
         }
 
         // Live human takeover: if an operator has taken this conversation over, the
@@ -443,7 +520,7 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
             }
         }
 
-        // Load stored intent into session for tool-gating (carries across requests).
+        // Load stored intent into the session (shadow-ban and RAG-learning gates; carries across requests).
         if (!session.intent) {
             try {
                 const stored = db.getConversationIntent(sessionId);
@@ -605,149 +682,78 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
         // Messages array is unchanged from session history (context now lives in system block 2)
         const messagesForClaude = session.messages;
 
-        // Claude tool definitions
-        const tools = [
-            {
-                name: 'show_booking_calendar',
-                description: 'Show the Calendly booking widget to the visitor. Call ONLY after explicit consent to book (e.g. "yeah let\'s do it", "how do I book?", "I\'m in") or when a clearly warm visitor has named spend, a specific KPI, or said they\'re evaluating options. DO NOT call speculatively, to nudge, while they\'re still deciding, or during discovery/objection stages. Your text message is still required and should cue the action (e.g. "Let\'s do it. Grab a time below."). trigger_reason is required so we can attribute booking quality later: pick the most honest label.',
-                input_schema: {
-                    type: 'object',
-                    properties: {
-                        trigger_reason: {
-                            type: 'string',
-                            enum: ['explicit_request', 'qualification_complete', 'warm_visitor_shortcut'],
-                            description: 'explicit_request = visitor asked to book or agreed after you offered. qualification_complete = you confirmed need + timing + authority-like signals before offering. warm_visitor_shortcut = first 1-2 messages showed clear buying intent (named spend, named KPI, evaluating options) and you skipped discovery.'
-                        }
-                    },
-                    required: ['trigger_reason']
-                }
-            },
-            {
-                name: 'offer_quick_replies',
-                description: 'Show 2-3 clickable reply buttons below your message. Use SPARINGLY, only at genuine decision forks where the choices are distinct paths forward (e.g. "Running ads now" vs "Starting fresh" vs "Just exploring"). DO NOT call when the visitor is mid-explanation, when your question is naturally open-ended, when you just used it on the previous message, or when there are more than 3 meaningful options. Maximum one call per response. Never two quick-reply messages in a row. If in doubt, skip it and let them type.',
-                input_schema: {
-                    type: 'object',
-                    properties: {
-                        options: {
-                            type: 'array',
-                            items: { type: 'string' },
-                            description: 'Array of 2-3 short reply options (under 6 words each)',
-                            minItems: 2,
-                            maxItems: 3
-                        }
-                    },
-                    required: ['options']
-                }
-            },
-            {
-                name: 'capture_lead_field',
-                description: 'Record a piece of lead info the visitor shared in their CURRENT message. Call once per field per turn. DO NOT call retroactively for info shared in a prior message, and DO NOT call twice for the same field already captured. For business_type, only call when the visitor explicitly names their business (valid: "I run an HVAC company"; NOT valid: "we need more leads"). Multiple parallel calls are fine if they shared multiple fields in one message.',
-                input_schema: {
-                    type: 'object',
-                    properties: {
-                        field: {
-                            type: 'string',
-                            enum: ['name', 'email', 'phone', 'business_type']
-                        },
-                        value: { type: 'string' }
-                    },
-                    required: ['field', 'value']
-                }
-            }
-        ];
-
-        // Gate tools based on stored intent. Blocked intents never get the booking
-        // tool so spam and job seekers can't waste Milos's calendar.
-        let gatedTools = tools;
-        if (spamFilter.isBlockedIntent(session.intent)) {
-            gatedTools = tools.filter(t => t.name !== 'show_booking_calendar');
-        }
-
-        // Call Claude API with tools. System is split into two blocks so the
-        // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
-        // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
-        // Sonnet 5.5 usually calls its tools first and writes the visitor-facing
-        // message only after the tool results come back, so one request can end
-        // with stop_reason 'tool_use' and no text at all. When that happens we
-        // acknowledge the tool calls and ask again (bounded) to get the message.
-        // The tool side effects themselves are applied further down, once, from
-        // responseBlocks. A response that already carries text is final as-is.
-        const MAX_CHAT_CALLS = 3;
-        const TOOL_ACKS = {
-            show_booking_calendar: 'The Book a Call button will appear with your message.',
-            offer_quick_replies: 'The reply buttons will appear under your message.',
-            capture_lead_field: 'Recorded.'
+        // Call Claude. System is split into two blocks so the static base prompt can
+        // be cached (ephemeral, 5-min TTL) while per-turn context stays dynamic.
+        // Cuts input token cost ~60-70% on multi-turn sessions.
+        //
+        // The reply comes back as structured output (REPLY_FORMAT): two sentence
+        // slots plus the side effects that used to be three tools. One request per
+        // turn, always. If the API ever rejects the structured request outright
+        // (a 400), the same turn is retried as plain text so chat stays up; the
+        // token parsing further down handles that shape.
+        // 'between_tools' only exists on Sonnet 5.5; any other model rejects it.
+        const chatThinking = config.modelThinking.chat === 'between_tools' && config.models.chat.startsWith('claude-sonnet-5-5')
+            ? { thinking: { type: 'between_tools' } }
+            : {};
+        const chatRequest = {
+            model: config.models.chat,
+            // Headroom for thinking; reply length is governed by the two sentence
+            // slots and the system prompt, not by this ceiling.
+            max_tokens: 2000,
+            ...chatThinking,
+            system: [
+                { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+                { type: 'text', text: dynamicSystemBlock }
+            ],
+            messages: messagesForClaude
         };
         const chatStartTime = Date.now();
-        const turnMessages = [...messagesForClaude];
-        const responseBlocks = [];
-        const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
         let response;
-        for (let call = 0; call < MAX_CHAT_CALLS; call++) {
+        let structured = true;
+        try {
             claudeBudget.count++; // counted before the call: a failed call still spent a request
             try {
                 response = await anthropic.messages.create({
-                    model: config.models.chat,
-                    // Headroom for thinking; reply length is governed by the system
-                    // prompt's sentence/word caps, not by this ceiling.
-                    max_tokens: 2000,
-                    output_config: { effort: config.modelEffort.chat },
-                    system: [
-                        { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-                        { type: 'text', text: dynamicSystemBlock }
-                    ],
-                    messages: turnMessages,
-                    tools: gatedTools,
-                    tool_choice: { type: 'auto' }
+                    ...chatRequest,
+                    output_config: { effort: config.modelEffort.chat, format: REPLY_FORMAT }
                 });
-            } catch (apiErr) {
-                console.error('[ANTHROPIC] chat completion failed:', apiErr.message);
-                alerts.apiError(apiErr, { sessionId, endpoint: '/api/chat', model: config.models.chat });
-                // A follow-up call failed but an earlier one already returned tool
-                // calls: keep those (lead capture, booking) and let the
-                // empty-response guard below supply the text.
-                if (responseBlocks.length > 0) break;
-                // Model call failed after retries (timeout, 5xx, overload). Don't
-                // dead-end the visitor with a 500: return a graceful canned reply so
-                // they can retry. The user message is already persisted, so the next
-                // turn continues the conversation. The filler is NOT pushed to history,
-                // so the model never sees it.
-                return res.json({
-                    message: "Sorry, I lagged for a second there. Mind sending that again?",
-                    quickReplies: [],
-                    leadData: session.leadData,
-                    sessionId,
+            } catch (formatErr) {
+                if (formatErr?.status !== 400) throw formatErr;
+                console.error('[ANTHROPIC] structured reply rejected, retrying as plain text:', formatErr.message);
+                alerts.apiError(formatErr, { sessionId, endpoint: '/api/chat', model: config.models.chat });
+                structured = false;
+                claudeBudget.count++;
+                response = await anthropic.messages.create({
+                    ...chatRequest,
+                    output_config: { effort: config.modelEffort.chat }
                 });
             }
-
-            responseBlocks.push(...response.content);
-            for (const k of Object.keys(usage)) usage[k] += response.usage?.[k] || 0;
-
-            const hasText = responseBlocks.some(b => b.type === 'text' && b.text.trim());
-            if (response.stop_reason !== 'tool_use' || hasText) break;
-
-            // Thinking blocks go back unchanged with the rest of the assistant turn.
-            turnMessages.push(
-                { role: 'assistant', content: response.content },
-                {
-                    role: 'user',
-                    content: response.content
-                        .filter(b => b.type === 'tool_use')
-                        .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: TOOL_ACKS[b.name] || 'Done.' }))
-                }
-            );
+        } catch (apiErr) {
+            // Model call failed after retries (timeout, 5xx, overload). Don't
+            // dead-end the visitor with a 500: return a graceful canned reply so
+            // they can retry. The user message is already persisted, so the next
+            // turn continues the conversation. The filler is NOT pushed to history,
+            // so the model never sees it.
+            console.error('[ANTHROPIC] chat completion failed:', apiErr.message);
+            alerts.apiError(apiErr, { sessionId, endpoint: '/api/chat', model: config.models.chat });
+            return res.json({
+                message: "Sorry, I lagged for a second there. Mind sending that again?",
+                quickReplies: [],
+                leadData: session.leadData,
+                sessionId,
+            });
         }
 
         // Record token usage + latency for cost observability (fire-and-forget).
-        // Summed across every call made for this turn.
         try {
+            const u = response.usage || {};
             db.logChatMetric({
                 conversationId: sessionId,
                 model: config.models.chat,
-                inputTokens: usage.input_tokens,
-                outputTokens: usage.output_tokens,
-                cacheReadTokens: usage.cache_read_input_tokens,
-                cacheCreationTokens: usage.cache_creation_input_tokens,
+                inputTokens: u.input_tokens || 0,
+                outputTokens: u.output_tokens || 0,
+                cacheReadTokens: u.cache_read_input_tokens || 0,
+                cacheCreationTokens: u.cache_creation_input_tokens || 0,
                 latencyMs: Date.now() - chatStartTime
             });
         } catch (err) {
@@ -763,98 +769,106 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
             });
         }
 
-        // Process response: extract text and tool calls
+        // Read by block type: the response can open with a thinking block.
+        const rawText = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+        let reply = null;
+        if (structured && rawText) {
+            try {
+                reply = JSON.parse(rawText);
+            } catch (_e) {
+                // Truncated or malformed JSON: never show braces to a visitor.
+                console.warn('[CHAT] structured reply did not parse', { sessionId, stop: response.stop_reason });
+            }
+        }
+
         let assistantMessage = '';
         let quickReplies = [];
         let showBookingCalendar = false;
-
         const userMsgIndex = session.messages.filter(m => m.role === 'user').length;
-        for (const block of responseBlocks) {
-            if (block.type === 'text') {
-                // Append rather than overwrite: a response may carry more than one
-                // text block (e.g. text interleaved with tool_use).
-                assistantMessage += (assistantMessage ? '\n' : '') + block.text;
-            } else if (block.type === 'tool_use') {
-                // Log every tool call for attribution analytics (P3-1)
-                db.logToolEvent({
-                    conversationId: sessionId,
-                    toolName: block.name,
-                    triggerReason: block.input?.trigger_reason || null,
-                    userMessageIndex: userMsgIndex,
-                    input: block.input
-                });
 
-                switch (block.name) {
-                    case 'show_booking_calendar':
-                        showBookingCalendar = true;
-                        session.bookingTrigger = block.input?.trigger_reason || 'unspecified';
-                        console.log(`[BOOKING TRIGGERED] session=${sessionId} reason=${session.bookingTrigger}`);
-                        try {
-                            db.setBookingTriggerReason(sessionId, session.bookingTrigger);
-                        } catch (err) {
-                            console.error('Error saving booking trigger reason:', err.message);
-                        }
-                        break;
-                    case 'offer_quick_replies':
-                        if (block.input.options) {
-                            // Suppress two quick-reply prompts in a row (the prompt rule,
-                            // enforced here so we don't rely on the model to follow it).
-                            if (session.lastHadQuickReplies) {
-                                console.warn('[QR SUPPRESSED] Consecutive quick-reply call dropped', { sessionId });
-                            } else {
-                                quickReplies = block.input.options.slice(0, 3);
-                            }
-                        }
-                        break;
-                    case 'capture_lead_field':
-                        if (block.input.field && block.input.value) {
-                            const fieldMap = {
-                                name: 'name',
-                                email: 'email',
-                                phone: 'phone',
-                                business_type: 'businessType'
-                            };
-                            const key = fieldMap[block.input.field];
-                            const newValue = String(block.input.value).trim();
-                            if (key && newValue) {
-                                const existing = session.leadData[key];
-                                if (!existing) {
-                                    session.leadData[key] = newValue;
-                                } else if (existing.toLowerCase() === newValue.toLowerCase()) {
-                                    // Same value, skip (model is re-firing)
-                                } else {
-                                    // Different value captured for an already-filled field.
-                                    // Prefer the longer / more structured value (full name > first name,
-                                    // full phone > partial). For email, keep original unless the new one
-                                    // is clearly different (user correcting themselves).
-                                    const preferNew = key === 'email'
-                                        ? newValue.includes('@') && newValue !== existing
-                                        : newValue.length > existing.length;
-                                    console.warn('[FIELD CONFLICT]', {
-                                        sessionId, field: key, existing, newValue, kept: preferNew ? 'new' : 'existing'
-                                    });
-                                    if (preferNew) session.leadData[key] = newValue;
-                                }
-                            }
-                        }
-                        break;
+        if (reply && typeof reply === 'object') {
+            const slot = s => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '');
+            assistantMessage = [slot(reply.sentence_1), slot(reply.sentence_2)].filter(Boolean).join(' ');
+
+            // Booking: the token in the text is what shows the button; the reason is attribution.
+            const reason = BOOKING_REASONS.includes(reply.booking_reason) ? reply.booking_reason : null;
+            if (assistantMessage.includes('[BOOK_CALL]') || reason) {
+                showBookingCalendar = true;
+                session.bookingTrigger = reason || 'token_emitted';
+                console.log(`[BOOKING TRIGGERED] session=${sessionId} reason=${session.bookingTrigger}`);
+                try {
+                    db.setBookingTriggerReason(sessionId, session.bookingTrigger);
+                    db.logToolEvent({
+                        conversationId: sessionId,
+                        toolName: 'show_booking_calendar',
+                        triggerReason: session.bookingTrigger,
+                        userMessageIndex: userMsgIndex,
+                        input: { trigger_reason: session.bookingTrigger }
+                    });
+                } catch (err) {
+                    console.error('Error saving booking trigger reason:', err.message);
                 }
             }
+
+            // Quick replies: never two turns in a row, never next to the booking
+            // button (prompt rules, enforced here so we don't rely on the model).
+            const options = Array.isArray(reply.quick_replies)
+                ? reply.quick_replies.filter(o => typeof o === 'string' && o.trim()).map(o => o.trim()).slice(0, 3)
+                : [];
+            if (options.length >= 2) {
+                if (session.lastHadQuickReplies || showBookingCalendar) {
+                    console.warn('[QR SUPPRESSED] quick replies dropped', { sessionId, consecutive: !!session.lastHadQuickReplies, withBooking: showBookingCalendar });
+                } else {
+                    quickReplies = options;
+                    db.logToolEvent({ conversationId: sessionId, toolName: 'offer_quick_replies', triggerReason: null, userMessageIndex: userMsgIndex, input: { options } });
+                }
+            }
+
+            // Lead fields the visitor stated in this message.
+            const lead = reply.lead && typeof reply.lead === 'object' ? reply.lead : {};
+            const fieldMap = { name: 'name', email: 'email', phone: 'phone', business_type: 'businessType' };
+            for (const [field, key] of Object.entries(fieldMap)) {
+                const newValue = typeof lead[field] === 'string' ? lead[field].trim().slice(0, 200) : '';
+                if (!newValue) continue;
+                if (field === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newValue)) continue;
+                db.logToolEvent({ conversationId: sessionId, toolName: 'capture_lead_field', triggerReason: null, userMessageIndex: userMsgIndex, input: { field, value: newValue } });
+                const existing = session.leadData[key];
+                if (!existing) {
+                    session.leadData[key] = newValue;
+                } else if (existing.toLowerCase() !== newValue.toLowerCase()) {
+                    // Different value for an already-filled field.
+                    // Email: keep original unless the new one is clearly different
+                    // (user correcting themselves). Name: the model read the whole
+                    // message, so trust it unless the stored name already contains
+                    // it ("Dana Smith" vs "Dana"). Otherwise prefer the longer value
+                    // (full phone > partial).
+                    let preferNew;
+                    if (key === 'email') preferNew = newValue !== existing;
+                    else if (key === 'name') preferNew = !existing.toLowerCase().includes(newValue.toLowerCase());
+                    else preferNew = newValue.length > existing.length;
+                    console.warn('[FIELD CONFLICT]', {
+                        sessionId, field: key, existing, newValue, kept: preferNew ? 'new' : 'existing'
+                    });
+                    if (preferNew) session.leadData[key] = newValue;
+                }
+            }
+        } else if (!structured) {
+            // Plain-text fallback: [BOOK_CALL] and [QUICK_REPLIES: ...] are parsed below.
+            assistantMessage = rawText;
         }
 
         // Record whether this turn emitted quick replies so the next turn can suppress consecutive calls
         session.lastHadQuickReplies = quickReplies.length > 0;
 
-        // Inject booking calendar marker for widget (if tool was called)
+        // The widget renders the button from the token. If the model named a
+        // booking reason but left the token out, add it.
         if (showBookingCalendar && !assistantMessage.includes('[BOOK_CALL]')) {
             assistantMessage = assistantMessage.trim() + ' [BOOK_CALL]';
         }
 
-        // Fallback: also parse legacy tokens in case model still uses them.
-        // The system prompt teaches the model to emit [BOOK_CALL] rather than call
-        // show_booking_calendar, so this is actually the common path. Instrument it
-        // the same as the tool path (trigger reason + tool event), otherwise booking
-        // attribution and the admin funnel/tool dashboards read empty.
+        // Plain-text fallback path only (the structured path handled booking
+        // above): a typed [BOOK_CALL] still books, instrumented the same way so
+        // booking attribution and the admin funnel/tool dashboards stay filled.
         if (!showBookingCalendar && assistantMessage.includes('[BOOK_CALL]')) {
             showBookingCalendar = true;
             session.bookingTrigger = 'token_emitted';
@@ -880,10 +894,11 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
             }
         }
 
-        // Guard against empty messages when Claude returns only tool calls or
-        // only stripped legacy tokens. Provide a minimal fallback so the
-        // widget doesn't render an empty bubble.
-        if (!assistantMessage || !assistantMessage.trim()) {
+        // Guard against empty messages: a refusal, output that did not parse, or
+        // nothing left once tokens are stripped. Provide a minimal fallback so
+        // the widget doesn't render an empty bubble. A message that is nothing
+        // but the booking token counts as empty: it would render a bare button.
+        if (!assistantMessage || !assistantMessage.replace(/\[BOOK_CALL\]/g, '').trim()) {
             console.warn('[EMPTY RESPONSE] Claude returned no text. Falling back.', {
                 hadBooking: showBookingCalendar,
                 quickReplyCount: quickReplies.length
@@ -906,6 +921,19 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
                 conversationId: sessionId,
                 patternName: trip.name,
                 matchedText: trip.matchedText,
+                fullMessage: assistantMessage
+            });
+        }
+
+        // Reply-length guardrail. Same log-only treatment: the two-sentence rule
+        // lives in the system prompt, this makes every miss visible.
+        const lengthCheck = guardrails.checkLength(assistantMessage, config.reply);
+        if (!lengthCheck.ok) {
+            console.warn(`[GUARDRAIL] reply too long (${lengthCheck.reason}):`, assistantMessage.substring(0, 200));
+            db.logGuardrailEvent({
+                conversationId: sessionId,
+                patternName: 'reply_too_long',
+                matchedText: lengthCheck.reason,
                 fullMessage: assistantMessage
             });
         }
