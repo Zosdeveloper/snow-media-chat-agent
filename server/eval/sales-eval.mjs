@@ -1,46 +1,34 @@
 // Sales-trainer eval. Drives the REAL server with TOUGH, resistant buyers across
-// the objection taxonomy (multiple variations each), then grades each transcript
-// on sales craft via a judge prompted as a veteran sales trainer.
+// the objection taxonomy (multiple variations each), then measures what the
+// business cares about and grades each transcript on sales craft.
+//
+// Outcome metrics come from the BUYER, not the agent: the conversation keeps
+// going after the agent offers the call, and at the end the simulated buyer says
+// (in character) whether they would book, only leave an email, or walk. An offer
+// the buyer ignores is not a booking.
+//
 // Run from server/:  node eval/sales-eval.mjs   (needs ANTHROPIC_API_KEY + VOYAGE_API_KEY in server/.env)
 // Boots its own server on PORT 3101 against a throwaway self-seeded DB; never touches the real DB.
-// Writes eval/sales-last-report.md.
-import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+// Writes eval/sales-last-report.md. Env: EVAL_PORT, EVAL_DB, EVAL_OUT, EVAL_JSON,
+// EVAL_LABEL, EVAL_CONCURRENCY, EVAL_MAX_SENTENCES, EVAL_ONLY (comma-separated scenario ids). CHAT_* vars pass through to the server.
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { anthropic, chat, bootServer, pool, lengthStats, countSentences, countWords, INVENTED_SLOT } from './lib.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_DIR = join(__dirname, '..');
 const PORT = Number(process.env.EVAL_PORT || 3101);
-const BASE = `http://127.0.0.1:${PORT}`;
-const EVAL_DB = './data/eval-sales.db';
-const OUT = join(__dirname, 'sales-last-report.md');
+const EVAL_DB = process.env.EVAL_DB || './data/eval-sales.db';
+const OUT = process.env.EVAL_OUT || join(__dirname, 'sales-last-report.md');
+const JSON_OUT = process.env.EVAL_JSON || null;
+const LABEL = process.env.EVAL_LABEL || 'dev build';
+const CONCURRENCY = Number(process.env.EVAL_CONCURRENCY || 4);
+const MAX_SENTENCES = Number(process.env.EVAL_MAX_SENTENCES || 2);
 
-const env = readFileSync(SERVER_DIR + '/.env', 'utf8');
-const API_KEY = (env.match(/^ANTHROPIC_API_KEY=(.+)$/m) || [])[1]?.trim();
-if (!API_KEY) { console.error('No ANTHROPIC_API_KEY'); process.exit(1); }
-
-const RUNTAG = String(Date.now());
 const VISITOR_MODEL = 'claude-sonnet-5-5';  // strong, stays in character, pushes back
 const JUDGE_MODEL = 'claude-sonnet-5-5';
-const MAX_TURNS = 7;
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-async function anthropic(model, system, messages, max_tokens = 1024, effort = 'low') {
-  for (let a = 0; a < 4; a++) {
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens, output_config: { effort }, system, messages })
-      });
-      if (r.status === 429 || r.status >= 500) { await sleep(2000 * (a + 1)); continue; }
-      const j = await r.json();
-      if (j.error) throw new Error(j.error.message);
-      return (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
-    } catch (e) { if (a === 3) throw e; await sleep(1500 * (a + 1)); }
-  }
-}
+const MAX_TURNS = 7;          // agent turns allowed before it has to have made an offer
+const POST_OFFER_TURNS = 2;   // buyer replies allowed after the offer (accept, object, or walk)
 
 // Tough buyer personas. Each resists, layers objections, and only books if the
 // rep genuinely earns it. "win" = a skilled rep should get a booking or a firm
@@ -113,122 +101,175 @@ const S = [
     persona: "Polished vendor who reframes the pitch as a 'partnership' to slip past gatekeeping. Push twice, trying to get on the calendar. After two clean deflections, reply exactly [END]." }
 ];
 
-async function chat(sessionId, message, page) {
-  for (;;) {
-    const r = await fetch(BASE + '/api/chat', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, message, pageContext: page })
-    });
-    // The per-IP chat limiter (8/min) is tighter than this harness runs. A 429
-    // has no message field, so without this wait it scores as a blank reply.
-    if (r.status === 429) {
-      const reset = Number(r.headers.get('ratelimit-reset')) || 15;
-      if (reset > 90) throw new Error('rate limited for ' + reset + 's');
-      await sleep(reset * 1000 + 500);
-      continue;
-    }
-    return r.json();
-  }
-}
-const strip = s => s.replace(/\[BOOK_CALL\]/g, '').replace(/\[QUICK_REPLIES:.*?\]/g, '').trim();
+const ONLY = (process.env.EVAL_ONLY || '').split(',').filter(Boolean);
+const SCN = ONLY.length ? S.filter(sc => ONLY.includes(sc.id)) : S;
 
-async function runScenario(sc, idx) {
-  const sessionId = `sales_${sc.id}_${idx}_${RUNTAG}`;
+const strip = s => s.replace(/\[BOOK_CALL\]/g, '').replace(/\[QUICK_REPLIES:.*?\]/g, '').trim();
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+
+const buyerSystem = sc => `You are roleplaying a real prospective buyer in a live website chat with a marketing agency. STAY FULLY IN CHARACTER. Never reveal you are an AI, never mention being a test, never break role. Be a realistic, tough buyer: concise (1-3 sentences), a little guarded, and do NOT cave easily. Persona and behavior: ${sc.persona}
+
+When the agent offers a call, a "Book a Call" button appears in the chat. React the way this buyer really would: if they earned it, say yes and give your email; if not, push back or leave. If you decide to fully disengage, reply with exactly [END].`;
+
+async function runScenario(sc, idx, base) {
+  const sessionId = `sales_${sc.id}_${idx}_${Date.now()}`;
+  const ip = `10.20.${Math.floor(idx / 250)}.${(idx % 250) + 1}`;
   const transcript = [];
-  let visitorMsg = sc.opener, booked = false;
-  for (let round = 0; round < MAX_TURNS; round++) {
+  let visitorMsg = sc.opener, offered = false, postOffer = 0, agentTurns = 0, leadData = {};
+  for (;;) {
     transcript.push({ role: 'visitor', text: visitorMsg });
-    let res; try { res = await chat(sessionId, visitorMsg, sc.page); }
-    catch (e) { transcript.push({ role: 'agent', text: '[ERR] ' + e.message }); break; }
+    let res;
+    try { res = await chat(base, sessionId, visitorMsg, sc.page, ip); }
+    catch (e) { transcript.push({ role: 'agent', text: '[ERR] ' + e.message, error: true }); break; }
     const raw = res.message || '';
     const booking = /\[BOOK_CALL\]/.test(raw);
-    if (booking) booked = true;
+    agentTurns++;
+    if (res.leadData) leadData = res.leadData;
     transcript.push({ role: 'agent', text: strip(raw), booked: booking, qr: res.quickReplies || [] });
-    if (booking) break;
-    const vMsgs = transcript.map(t => ({ role: t.role === 'visitor' ? 'assistant' : 'user', content: t.role === 'visitor' ? t.text : (t.text || '(silence)') }));
-    const vSys = `You are roleplaying a real prospective buyer in a live website chat with a marketing agency. STAY FULLY IN CHARACTER. Never reveal you are an AI, never mention being a test, never break role. Be a realistic, tough buyer: concise (1-3 sentences), a little guarded, and do NOT cave easily. Persona and behavior: ${sc.persona}\n\nIf you decide to fully disengage, reply with exactly [END].`;
-    let v; try { v = await anthropic(VISITOR_MODEL, vSys, vMsgs, 1024); } catch { v = '[END]'; }
+    if (booking) offered = true;
+    if (offered) { if (postOffer >= POST_OFFER_TURNS) break; postOffer++; }
+    else if (agentTurns >= MAX_TURNS) break;
+
+    // The buyer sees the same thing a real visitor does: the reply, plus the button when it is shown.
+    const BUTTON_NOTE = ' [A "Book a Call" button is now showing under this message]';
+    const vMsgs = transcript.map(t => ({ role: t.role === 'visitor' ? 'assistant' : 'user', content: t.role === 'visitor' ? t.text : (t.text || '(silence)') + (t.booked ? BUTTON_NOTE : '') }));
+    let v; try { v = await anthropic(VISITOR_MODEL, buyerSystem(sc), vMsgs); } catch { v = '[END]'; }
     if (!v || /\[END\]/i.test(v)) break;
     visitorMsg = v;
   }
-  return { sessionId, transcript, booked };
+  return { sessionId, transcript, offered, serverEmail: leadData.email || null, serverName: leadData.name || null };
+}
+
+const convoText = run => run.transcript.map(t => `${t.role === 'visitor' ? 'BUYER' : 'AGENT'}: ${t.text}${t.booked ? ' [Book a Call button shown]' : ''}`).join('\n');
+
+// The buyer's own verdict on what they do next. This is the outcome metric.
+const DECISION_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['decision', 'reason'],
+  properties: {
+    decision: { type: 'string', enum: ['book_call', 'email_only', 'leave'] },
+    reason: { type: 'string' }
+  }
+};
+async function buyerDecision(sc, run) {
+  const prompt = `The chat below is over. You were the BUYER. Persona and behavior: ${sc.persona}
+
+TRANSCRIPT:
+${convoText(run)}
+
+Staying true to that persona, what do you actually do next?
+- book_call: you click the Book a Call button and schedule the call.
+- email_only: you do not book, but you gave (or are willing to give) your email so they can follow up.
+- leave: you close the chat with no booking and no email.
+Judge it on how the agent actually handled you, by your persona's own rules. Give the reason in one sentence.`;
+  try { return await anthropic(VISITOR_MODEL, 'You report honestly what a specific buyer would do after a sales chat. Return only the JSON.', [{ role: 'user', content: prompt }], { maxTokens: 2048, effort: 'low', schema: DECISION_SCHEMA }); }
+  catch (e) { return { decision: 'leave', reason: 'decision call failed: ' + e.message, error: true }; }
 }
 
 const DIMS = ['rapport', 'discovery', 'objectionHandling', 'control', 'urgency', 'credibility', 'closing'];
+const JUDGE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: [...DIMS, 'earnedTheBooking', 'leakedPricing', 'biggestMiss', 'bestMoment', 'coachingNote'],
+  properties: {
+    ...Object.fromEntries(DIMS.map(d => [d, { type: 'integer' }])),
+    earnedTheBooking: { type: 'boolean' }, leakedPricing: { type: 'boolean' },
+    biggestMiss: { type: 'string' }, bestMoment: { type: 'string' }, coachingNote: { type: 'string' }
+  }
+};
 async function judge(sc, run) {
-  const convo = run.transcript.map(t => `${t.role === 'visitor' ? 'BUYER' : 'AGENT'}: ${t.text}`).join('\n');
-  const sys = `You are a veteran B2B sales trainer (Sandler, Challenger, and SPIN schooled) doing a hard call-review of a website sales-chat agent. You grade CRAFT, not politeness. Be demanding: a 7 means solidly competent, 9-10 is elite, 5 is mediocre, 3 is poor. Reward isolating objections, reframing without defensiveness, cost-of-delay, taking control, specificity, and clean closes. Penalize caving, boilerplate, happy-ears, accepting stalls, interrogating, and weak/passive closes. Return ONLY compact JSON.`;
+  const sys = `You are a veteran B2B sales trainer (Sandler, Challenger, and SPIN schooled) doing a hard call-review of a website sales-chat agent. You grade CRAFT, not politeness. Be demanding: a 7 means solidly competent, 9-10 is elite, 5 is mediocre, 3 is poor. Reward isolating objections, reframing without defensiveness, cost-of-delay, taking control, specificity, and clean closes. Penalize caving, boilerplate, happy-ears, accepting stalls, interrogating, and weak/passive closes. This is a chat widget, so short messages are a product requirement that is measured separately: do not reward or penalize message length. Return ONLY the JSON.`;
   const goal = sc.expect === 'dq'
     ? `This is NOT a real prospect (should be politely disqualified, no booking). Grade how cleanly and professionally the agent held the boundary.`
     : `This is a winnable but RESISTANT buyer. A skilled rep should handle the objection and earn a booking or a firm next step. Grade whether the agent earned it.`;
   const prompt = `Objection type: ${sc.type} (${sc.variation}). ${goal}
 
 TRANSCRIPT:
-${convo}
+${convoText(run)}
 
-Grade the AGENT only, 1-10 per dimension. Return JSON exactly:
-{"rapport":n,"discovery":n,"objectionHandling":n,"control":n,"urgency":n,"credibility":n,"closing":n,"earnedTheBooking":true|false,"leakedPricing":true|false,"biggestMiss":"one sharp sentence","bestMoment":"one quote or short note","coachingNote":"one or two sentences of specific coaching"}`;
-  try {
-    const out = await anthropic(JUDGE_MODEL, sys, [{ role: 'user', content: prompt }], 2048, 'medium');
-    const m = out.match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : { parseError: out.slice(0, 160) };
-  } catch (e) { return { judgeError: e.message }; }
+Grade the AGENT only, 1-10 per dimension. biggestMiss is one sharp sentence, bestMoment is one quote or short note, coachingNote is one or two sentences of specific coaching.`;
+  try { return await anthropic(JUDGE_MODEL, sys, [{ role: 'user', content: prompt }], { maxTokens: 4096, effort: 'medium', schema: JUDGE_SCHEMA }); }
+  catch (e) { return { judgeError: e.message }; }
 }
 
-async function waitHealth(t = 40000) { const s = Date.now(); while (Date.now() - s < t) { try { const r = await fetch(BASE + '/api/health'); if (r.ok) return true; } catch {} await sleep(800); } return false; }
-
 async function main() {
-  for (const ext of ['', '-wal', '-shm']) { try { rmSync(SERVER_DIR + '/' + EVAL_DB.replace('./', '') + ext); } catch {} }
-  console.log('Booting on', PORT, '...');
-  const srv = spawn('node', ['server.js'], { cwd: SERVER_DIR, env: { ...process.env, PORT: String(PORT), DATABASE_PATH: EVAL_DB, NODE_ENV: 'development', DAILY_IP_MAX: '100000' }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let log = ''; srv.stdout.on('data', d => log += d); srv.stderr.on('data', d => log += d);
-  if (!await waitHealth()) { console.error('unhealthy\n', log.slice(-1500)); srv.kill(); process.exit(1); }
-  console.log('Healthy. Running', S.length, 'sales scenarios (tough buyers)...\n');
+  console.log(`[${LABEL}] booting on ${PORT} against ${EVAL_DB} ...`);
+  const srv = await bootServer({ port: PORT, dbPath: EVAL_DB });
+  console.log(`Healthy and seeded. Running ${SCN.length} sales scenarios, ${CONCURRENCY} at a time...\n`);
 
-  const results = [];
-  for (let i = 0; i < S.length; i++) {
-    process.stdout.write(`  [${i + 1}/${S.length}] ${S[i].id} (${S[i].type}) ... `);
-    const run = await runScenario(S[i], i);
-    const j = await judge(S[i], run);
+  const results = await pool(SCN, CONCURRENCY, async (sc, i) => {
+    const run = await runScenario(sc, i, srv.base);
+    const [decision, j] = await Promise.all([buyerDecision(sc, run), judge(sc, run)]);
     const composite = DIMS.every(d => typeof j[d] === 'number') ? (DIMS.reduce((a, d) => a + j[d], 0) / DIMS.length) : null;
-    results.push({ sc: S[i], run, j, composite });
-    console.log(`booked:${run.booked} earned:${j.earnedTheBooking} score:${composite ? composite.toFixed(1) : '?'}/10`);
-  }
-  srv.kill('SIGINT');
+    const replies = run.transcript.filter(t => t.role === 'agent' && !t.error).map(t => t.text);
+    const buyerEmail = run.transcript.some(t => t.role === 'visitor' && EMAIL_RE.test(t.text));
+    console.log(`  ${sc.id.padEnd(22)} offered:${run.offered ? 'y' : 'n'} buyer:${decision.decision.padEnd(10)} email:${run.serverEmail ? 'y' : 'n'} score:${composite ? composite.toFixed(1) : '?'}`);
+    return { sc, run, j, decision, composite, replies, buyerEmail };
+  });
+  srv.stop();
 
-  const winScn = results.filter(r => r.sc.expect === 'win');
+  const win = results.filter(r => r.sc.expect === 'win');
   const dq = results.filter(r => r.sc.expect === 'dq');
-  const dimAvg = {}; DIMS.forEach(d => { const v = results.map(r => r.j[d]).filter(x => typeof x === 'number'); dimAvg[d] = v.length ? (v.reduce((a, b) => a + b, 0) / v.length) : null; });
-  const overall = results.map(r => r.composite).filter(Boolean);
-  const overallAvg = overall.reduce((a, b) => a + b, 0) / overall.length;
-  const bookedWin = winScn.filter(r => r.run.booked).length;
-  const earnedWin = winScn.filter(r => r.j.earnedTheBooking).length;
-  const dqLeak = dq.filter(r => r.run.booked).length;
-  const pricingLeaks = results.filter(r => r.j.leakedPricing === true);
+  const n = (arr, f) => arr.filter(f).length;
+  const dimAvg = {};
+  DIMS.forEach(d => { const v = results.map(r => r.j[d]).filter(x => typeof x === 'number'); dimAvg[d] = v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; });
+  const scored = results.map(r => r.composite).filter(x => x !== null);
+  const overallAvg = scored.length ? scored.reduce((a, b) => a + b, 0) / scored.length : 0;
+  const allReplies = results.flatMap(r => r.replies);
+  const len = lengthStats(allReplies, MAX_SENTENCES);
+  const summary = {
+    label: LABEL, scenarios: SCN.length, winnable: win.length,
+    wouldBook: n(win, r => r.decision.decision === 'book_call'),
+    emailOnly: n(win, r => r.decision.decision === 'email_only'),
+    lost: n(win, r => r.decision.decision === 'leave'),
+    offered: n(win, r => r.run.offered),
+    emailCapturedByServer: n(win, r => !!r.run.serverEmail),
+    buyerTypedEmail: n(win, r => r.buyerEmail),
+    emailTypedButNotCaptured: n(win, r => r.buyerEmail && !r.run.serverEmail),
+    trainerEarned: n(win, r => r.j.earnedTheBooking === true),
+    dqLeaks: n(dq, r => r.run.offered), dqTotal: dq.length,
+    pricingLeaks: results.filter(r => r.j.leakedPricing === true).map(r => r.sc.id),
+    inventedSlotTurns: allReplies.filter(t => INVENTED_SLOT.test(t)).length,
+    craft: +overallAvg.toFixed(2), dims: Object.fromEntries(DIMS.map(d => [d, dimAvg[d] === null ? null : +dimAvg[d].toFixed(1)])),
+    length: len, judgeErrors: n(results, r => r.j.judgeError)
+  };
 
-  let md = `# Sales-Trainer Eval (tough buyers)\n\nAgent: dev build. ${S.length} scenarios, Sonnet adversarial buyers, sales-trainer judge.\n\n## Composite scorecard (1-10)\n`;
-  md += `**Overall craft score: ${overallAvg.toFixed(1)}/10**\n\n`;
-  DIMS.forEach(d => md += `- ${d}: **${dimAvg[d].toFixed(1)}**\n`);
-  md += `\n- Winnable buyers that BOOKED: **${bookedWin}/${winScn.length}**\n`;
-  md += `- Winnable buyers the trainer says were EARNED: **${earnedWin}/${winScn.length}**\n`;
-  md += `- Disqualify leaks: **${dqLeak}/${dq.length}**\n`;
-  md += `- Pricing leaks: **${pricingLeaks.length}** ${pricingLeaks.map(r => r.sc.id).join(', ')}\n\n`;
+  let md = `# Sales-Trainer Eval (tough buyers)\n\nAgent: ${LABEL}. ${SCN.length} scenarios, Sonnet adversarial buyers, sales-trainer judge.\n\n## What the business cares about\n`;
+  md += `- Buyers who would BOOK the call: **${summary.wouldBook}/${win.length}**\n`;
+  md += `- Buyers who left only an email: **${summary.emailOnly}/${win.length}**\n`;
+  md += `- Buyers lost (no booking, no email): **${summary.lost}/${win.length}**\n`;
+  md += `- Email actually captured by the server: **${summary.emailCapturedByServer}/${win.length}** (buyer typed one in ${summary.buyerTypedEmail}; typed but NOT captured: ${summary.emailTypedButNotCaptured})\n`;
+  md += `- Agent made the offer: ${summary.offered}/${win.length}\n`;
+  md += `- Disqualify leaks: **${summary.dqLeaks}/${dq.length}** | Pricing leaks: **${summary.pricingLeaks.length}** ${summary.pricingLeaks.join(', ')}\n\n`;
+  md += `## Reply length (limit: ${MAX_SENTENCES} sentences)\n`;
+  md += `- Replies within the limit: **${len.withinPct}%** (${len.turns - len.over}/${len.turns})\n`;
+  md += `- Average ${len.avgSentences} sentences / ${len.avgWords} words. Longest: ${len.maxSentences} sentences / ${len.maxWords} words\n`;
+  md += `- Replies naming a day and time the agent cannot see: **${summary.inventedSlotTurns}**\n\n`;
+  md += `## Sales craft (trainer judge, 1-10)\n**Overall: ${overallAvg.toFixed(1)}/10** | trainer says earned: ${summary.trainerEarned}/${win.length}\n\n`;
+  DIMS.forEach(d => md += `- ${d}: **${dimAvg[d] === null ? '?' : dimAvg[d].toFixed(1)}**\n`);
 
-  md += `## By objection type\n\n`;
-  for (const { sc, run, j, composite } of results) {
+  md += `\n## By objection type\n\n`;
+  for (const { sc, run, j, decision, composite } of results) {
     md += `### ${sc.id} — ${sc.type}: ${sc.variation}\n`;
-    md += `Score **${composite ? composite.toFixed(1) : '?'}/10** | booked:${run.booked} earned:${j.earnedTheBooking} | rapport ${j.rapport} disc ${j.discovery} obj ${j.objectionHandling} ctrl ${j.control} urg ${j.urgency} cred ${j.credibility} close ${j.closing}\n`;
-    md += `- Biggest miss: ${j.biggestMiss || j.parseError || j.judgeError || '-'}\n`;
+    md += `Buyer: **${decision.decision}** (${decision.reason}) | offered:${run.offered} | server email:${run.serverEmail || 'none'}${run.serverName ? ' | server name:' + run.serverName : ''}\n`;
+    md += `Score **${composite ? composite.toFixed(1) : '?'}/10** | earned:${j.earnedTheBooking} | rapport ${j.rapport} disc ${j.discovery} obj ${j.objectionHandling} ctrl ${j.control} urg ${j.urgency} cred ${j.credibility} close ${j.closing}\n`;
+    md += `- Biggest miss: ${j.biggestMiss || j.judgeError || '-'}\n`;
     md += `- Best moment: ${j.bestMoment || '-'}\n`;
     md += `- Coaching: ${j.coachingNote || '-'}\n\n`;
     md += `\`\`\`\n`;
-    for (const t of run.transcript) md += `${t.role === 'visitor' ? 'BUYER' : 'AGENT'}: ${t.text}${t.booked ? '  [BOOK_CALL]' : ''}${t.qr?.length ? '  {QR:' + t.qr.join('/') + '}' : ''}\n`;
+    for (const t of run.transcript) {
+      const tag = t.role === 'agent' && !t.error ? `  (${countSentences(t.text)}s/${countWords(t.text)}w)` : '';
+      md += `${t.role === 'visitor' ? 'BUYER' : 'AGENT'}: ${t.text}${t.booked ? '  [BOOK_CALL]' : ''}${t.qr?.length ? '  {QR:' + t.qr.join('/') + '}' : ''}${tag}\n`;
+    }
     md += `\`\`\`\n\n`;
   }
   writeFileSync(OUT, md);
+  if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify({ summary, results: results.map(r => ({ id: r.sc.id, offered: r.run.offered, decision: r.decision, serverEmail: r.run.serverEmail, serverName: r.run.serverName, composite: r.composite, judge: r.j, transcript: r.run.transcript })) }, null, 1));
+
   console.log('\nReport:', OUT);
-  console.log(`\n=== OVERALL ${overallAvg.toFixed(1)}/10 ===`);
-  DIMS.forEach(d => console.log(`  ${d}: ${dimAvg[d].toFixed(1)}`));
-  console.log(`booked ${bookedWin}/${winScn.length} | earned ${earnedWin}/${winScn.length} | dq leaks ${dqLeak}/${dq.length} | pricing leaks ${pricingLeaks.length}`);
+  console.log(`\n=== ${LABEL} ===`);
+  console.log(`would book ${summary.wouldBook}/${win.length} | email only ${summary.emailOnly} | lost ${summary.lost} | server captured email ${summary.emailCapturedByServer}/${win.length} (typed, not captured: ${summary.emailTypedButNotCaptured})`);
+  console.log(`dq leaks ${summary.dqLeaks}/${dq.length} | pricing leaks ${summary.pricingLeaks.length} | invented slots in ${summary.inventedSlotTurns} replies`);
+  console.log(`length: ${len.withinPct}% within ${MAX_SENTENCES} sentences | avg ${len.avgSentences}s/${len.avgWords}w | max ${len.maxSentences}s/${len.maxWords}w`);
+  console.log(`craft ${overallAvg.toFixed(1)}/10 | trainer earned ${summary.trainerEarned}/${win.length} | ` + DIMS.map(d => `${d.slice(0, 4)} ${dimAvg[d] === null ? '?' : dimAvg[d].toFixed(1)}`).join(' '));
   process.exit(0);
 }
 main().catch(e => { console.error('FATAL', e); process.exit(1); });

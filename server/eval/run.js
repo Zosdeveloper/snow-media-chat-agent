@@ -13,6 +13,7 @@
 const path = require('path');
 const fs = require('fs');
 const guardrails = require('../services/guardrails');
+const junkDetector = require('../services/junkDetector');
 
 const cases = JSON.parse(fs.readFileSync(path.join(__dirname, 'cases.json'), 'utf8'));
 
@@ -47,6 +48,20 @@ function runCase(c) {
             const result = guardrails.extractLeadData(c.input, {});
             if (!eq(result, c.expect.extracted)) {
                 return `expected ${JSON.stringify(c.expect.extracted)}, got ${JSON.stringify(result)}`;
+            }
+            return null;
+        }
+        case 'countSentences': {
+            const result = guardrails.countSentences(c.input);
+            if (result !== c.expect.sentences) {
+                return `expected ${c.expect.sentences} sentences, got ${result}`;
+            }
+            return null;
+        }
+        case 'junk': {
+            const result = junkDetector.checkMessage(c.input).junk;
+            if (result !== c.expect.junk) {
+                return `expected junk=${c.expect.junk}, got ${result}`;
             }
             return null;
         }
