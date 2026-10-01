@@ -104,7 +104,9 @@ class SnowMediaAIChatAgent {
     // path). Otherwise capture the email inline first so a visitor who opens
     // Calendly and abandons it still leaves a follow-up-able lead.
     requestBooking() {
-        if (this.isValidEmail(this.leadData.email)) {
+        // Already have an email, or they were asked once and chose to skip:
+        // go straight to the calendar.
+        if (this.isValidEmail(this.leadData.email) || this.gateSkipped) {
             this.openCalendly();
             return;
         }
@@ -140,7 +142,7 @@ class SnowMediaAIChatAgent {
         const input = wrap.querySelector('.snow-gate-input');
         const submit = () => this.submitEmailGate(wrap);
         wrap.querySelector('.snow-gate-btn').addEventListener('click', (e) => { e.preventDefault(); submit(); });
-        wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.dismissGate(wrap); this.openCalendly(); });
+        wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.gateSkipped = true; this.dismissGate(wrap); this.openCalendly(); });
         input.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
         setTimeout(() => input.focus(), 50);
     }
@@ -165,6 +167,9 @@ class SnowMediaAIChatAgent {
 
     dismissGate(wrap) {
         wrap.querySelector('.snow-gate-form')?.remove();
+        // Drop the id too. showEmailGate() looks for it, and a spent bubble left
+        // the Book a Call button doing nothing on the next click.
+        wrap.removeAttribute('id');
     }
 
     // High-entropy, unguessable ids. The server treats both as bearer
@@ -652,8 +657,9 @@ class SnowMediaAIChatAgent {
     }
 
     processMessageText(text) {
-        // First, escape HTML to prevent XSS attacks
-        const escaped = this.escapeHtml(text);
+        // First, escape HTML to prevent XSS attacks. Quotes too: the link below
+        // is built as an attribute, so a quote inside a URL would break out of href.
+        const escaped = this.escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
         // Convert [BOOK_CALL] to booking button
         let processed = escaped.replace(
@@ -662,10 +668,12 @@ class SnowMediaAIChatAgent {
         );
 
         // Convert URLs to links (on escaped text)
-        processed = processed.replace(
-            /(https?:\/\/[^\s&]+)/g,
-            '<a href="$1" target="_blank" rel="noopener">$1</a>'
-        );
+        processed = processed.replace(/https?:\/\/[^\s&<]+/g, (url) => {
+            // Sentence punctuation right after a link is not part of the link.
+            const trail = (url.match(/[.,!?)]+$/) || [''])[0];
+            const clean = trail ? url.slice(0, -trail.length) : url;
+            return `<a href="${clean}" target="_blank" rel="noopener noreferrer">${clean}</a>${trail}`;
+        });
 
         // Convert **bold** to <strong>
         processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -770,10 +778,11 @@ class SnowMediaAIChatAgent {
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                // Lead fields only: the transcript is already on the server, and
+                // sending it pushed long chats past the 10kb body limit.
                 body: JSON.stringify({
                     sessionId: this.sessionId,
-                    leadData: this.leadData,
-                    conversationHistory: this.messageHistory
+                    leadData: this.leadData
                 })
             });
 

@@ -306,7 +306,7 @@
 
         /* Book Call Button */
         #snow-chat-widget .snow-book-btn {
-            display: inline-block !important;
+            display: block !important;
             margin-top: 10px !important;
             padding: 12px 24px !important;
             background: linear-gradient(135deg, #10b981, #059669) !important;
@@ -564,6 +564,8 @@
             this.history = this.loadHistory();
             this.leadSubmitted = false;
             this.historyRestored = false;
+            this.gateSkipped = false;
+            this.utmParams = this.captureUtmParams();
 
             // Live human takeover: poll state. lastSeenId is the cursor into the
             // server's message ids; the poll only surfaces out-of-band assistant
@@ -821,6 +823,26 @@
             });
         }
 
+        // UTMs only exist on the landing URL, so keep the first set seen for the
+        // rest of the tab session and send it with every message.
+        captureUtmParams() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const utms = {};
+                for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']) {
+                    const val = params.get(key);
+                    if (val) utms[key] = val;
+                }
+                if (Object.keys(utms).length > 0) {
+                    sessionStorage.setItem('snow_chat_utm', JSON.stringify(utms));
+                    return utms;
+                }
+                return JSON.parse(sessionStorage.getItem('snow_chat_utm') || 'null');
+            } catch (_e) {
+                return null;
+            }
+        }
+
         postChatMessage(message, turnstileToken) {
             return fetch(CONFIG.apiUrl, {
                 method: 'POST',
@@ -829,6 +851,11 @@
                     sessionId: this.sessionId,
                     message,
                     leadData: this.leadData,
+                    // The page the visitor is on right now. The agent's page-aware
+                    // openers and hints depend on it; the Referer header alone only
+                    // carries the origin on a cross-origin request.
+                    pageContext: { url: window.location.href, title: document.title, referrer: document.referrer },
+                    utmParams: this.utmParams,
                     ...(turnstileToken ? { turnstileToken } : {}),
                     ...this.readHoneypots()
                 })
@@ -838,6 +865,7 @@
         async getAIResponse(message) {
             this.isTyping = true;
             this.showTyping();
+            const startedAt = Date.now();
             try {
                 // First message of a new conversation may need a Turnstile
                 // token (null whenever the feature is dormant server-side).
@@ -884,7 +912,9 @@
                     this.renderedIds.add(data.messageId);
                 }
 
-                await this.delay(Math.min(1000 + data.message.length * 20, 3000));
+                // The reply already took a few seconds to generate. Only pad when it
+                // came back faster than a person could plausibly type, never on top.
+                await this.delay(Math.max(0, 1200 - (Date.now() - startedAt)));
                 this.hideTyping();
                 this.addMessage(data.message, 'bot');
                 if (data.quickReplies?.length) this.showReplies(data.quickReplies);
@@ -959,9 +989,17 @@
         }
 
         formatText(text) {
-            let t = this.escapeHtml(text);
+            // escapeHtml leaves quotes alone (they are legal in text nodes), but the
+            // link below is built as an attribute, so a quote inside a URL would
+            // break out of href. Escape them here.
+            let t = this.escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
             t = t.replace(/\[BOOK_CALL\]/g, '<button class="snow-book-btn" onclick="window.SnowChat.requestBooking()">📅 Book a Call</button>');
-            t = t.replace(/(https?:\/\/[^\s&]+)/g, '<a href="$1" target="_blank">$1</a>');
+            t = t.replace(/https?:\/\/[^\s&<]+/g, (url) => {
+                // Sentence punctuation right after a link is not part of the link.
+                const trail = (url.match(/[.,!?)]+$/) || [''])[0];
+                const clean = trail ? url.slice(0, -trail.length) : url;
+                return `<a href="${clean}" target="_blank" rel="noopener noreferrer">${clean}</a>${trail}`;
+            });
             t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             return t.replace(/\n/g, '<br>');
         }
@@ -1038,7 +1076,9 @@
         // visitor who opens Calendly and abandons it still leaves a
         // follow-up-able lead instead of vanishing.
         requestBooking() {
-            if (this.isValidEmail(this.leadData.email)) {
+            // Already have an email, or they were asked once and chose to skip:
+            // go straight to the calendar.
+            if (this.isValidEmail(this.leadData.email) || this.gateSkipped) {
                 this.openCalendly();
                 return;
             }
@@ -1070,7 +1110,7 @@
             const input = wrap.querySelector('.snow-gate-input');
             const submit = () => this.submitEmailGate(wrap);
             wrap.querySelector('.snow-gate-btn').addEventListener('click', (e) => { e.preventDefault(); submit(); });
-            wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.dismissGate(wrap); this.openCalendly(); });
+            wrap.querySelector('.snow-gate-skip').addEventListener('click', (e) => { e.preventDefault(); this.gateSkipped = true; this.dismissGate(wrap); this.openCalendly(); });
             input.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
             setTimeout(() => input.focus(), 50);
         }
@@ -1095,17 +1135,24 @@
 
         dismissGate(wrap) {
             wrap.querySelector('.snow-gate-form')?.remove();
+            // Drop the marker class too. showEmailGate() looks for it, and a spent
+            // bubble left the Book a Call button doing nothing on the next click.
+            wrap.classList.remove('snow-gate');
         }
 
         async submitLead() {
             if (this.leadSubmitted) return;
             try {
-                await fetch(CONFIG.leadsUrl, {
+                // Lead fields only. The transcript is already on the server, and
+                // sending it here pushed long chats past the 10kb body limit, so
+                // the email never arrived.
+                const res = await fetch(CONFIG.leadsUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId: this.sessionId, leadData: this.leadData, conversationHistory: this.history })
+                    body: JSON.stringify({ sessionId: this.sessionId, leadData: this.leadData })
                 });
-                this.leadSubmitted = true;
+                // Only stop retrying once the server has it.
+                if (res.ok) this.leadSubmitted = true;
             } catch (e) { console.error('Lead submit error:', e); }
         }
     }
