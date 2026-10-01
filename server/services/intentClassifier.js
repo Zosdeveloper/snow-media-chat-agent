@@ -1,6 +1,6 @@
 /**
  * Intent Classifier
- * Uses Claude Haiku to label conversations that slipped past the keyword filter.
+ * Uses Claude (config.models.classifier) to label conversations that slipped past the keyword filter.
  * Runs in the background after the first user message so it doesn't add latency
  * to the visitor's first response. Stored on the conversation record and used
  * to gate downstream behavior (follow-up emails, booking tool, RAG learning).
@@ -69,12 +69,16 @@ async function classify(text, apiKey) {
 
         const response = await client.messages.create({
             model: config.models.classifier,
-            max_tokens: 30,
+            // The label itself is ~10 tokens; the rest is headroom for thinking,
+            // which counts against max_tokens and cannot be disabled.
+            max_tokens: 1024,
+            output_config: { effort: config.modelEffort.classifier },
             system: CLASSIFIER_PROMPT,
             messages: [{ role: 'user', content: text.slice(0, 1500) }],
         });
 
-        const raw = (response.content?.[0]?.text || '').trim().toLowerCase();
+        // Read by block type: the response can open with a thinking block.
+        const raw = (response.content?.find(b => b.type === 'text')?.text || '').trim().toLowerCase();
         const [intent, confidenceStr] = raw.split('|').map(s => s.trim());
 
         if (!VALID_INTENTS.includes(intent)) {

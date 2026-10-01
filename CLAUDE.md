@@ -10,7 +10,7 @@ AI-powered sales chat widget for The Snow Media marketing agency. The chat agent
 
 - **Backend**: Node.js + Express.js (all code in `server/`)
 - **Database**: SQLite (better-sqlite3) with sqlite-vec extension for vector search
-- **AI**: Claude API (claude-sonnet-4-6) for conversations
+- **AI**: Claude API (claude-sonnet-5-5 for every role: chat, summarizer, follow-up emails, intent classifier; set in `config.models`, effort in `config.modelEffort`)
 - **Embeddings**: Voyage AI (voyage-3-lite, 512 dimensions) for RAG similarity search
 - **Deployment**: Railway (auto-deploy from GitHub `master`)
 
@@ -43,7 +43,7 @@ Required in `server/.env` (see `server/.env.example`):
 2. Persist conversation + message to SQLite
 3. RAG: embed current context via Voyage AI, find similar successful patterns via sqlite-vec
 4. `promptBuilder` enriches system prompt with RAG examples + lead context + stage guidance
-5. Claude generates response (max 500 tokens)
+5. Claude generates response (max_tokens 2000, which includes thinking headroom)
 6. Parse special tokens (`[BOOK_CALL]`, `[QUICK_REPLIES: ...]`) from response
 7. Extract lead data (name/email/phone) from user message via regex
 8. Auto-tagger evaluates if conversation qualifies as a saveable pattern

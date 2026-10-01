@@ -666,51 +666,101 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
         // Call Claude API with tools. System is split into two blocks so the
         // static base prompt can be cached (ephemeral, 5-min TTL) while per-turn
         // context stays dynamic. Cuts input token cost ~60-70% on multi-turn sessions.
+        // Sonnet 5.5 usually calls its tools first and writes the visitor-facing
+        // message only after the tool results come back, so one request can end
+        // with stop_reason 'tool_use' and no text at all. When that happens we
+        // acknowledge the tool calls and ask again (bounded) to get the message.
+        // The tool side effects themselves are applied further down, once, from
+        // responseBlocks. A response that already carries text is final as-is.
+        const MAX_CHAT_CALLS = 3;
+        const TOOL_ACKS = {
+            show_booking_calendar: 'The Book a Call button will appear with your message.',
+            offer_quick_replies: 'The reply buttons will appear under your message.',
+            capture_lead_field: 'Recorded.'
+        };
         const chatStartTime = Date.now();
-        claudeBudget.count++; // counted before the call: a failed call still spent a request
+        const turnMessages = [...messagesForClaude];
+        const responseBlocks = [];
+        const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
         let response;
-        try {
-            response = await anthropic.messages.create({
-                model: config.models.chat,
-                max_tokens: 500,
-                system: [
-                    { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-                    { type: 'text', text: dynamicSystemBlock }
-                ],
-                messages: messagesForClaude,
-                tools: gatedTools,
-                tool_choice: { type: 'auto' }
-            });
-        } catch (apiErr) {
-            // Model call failed after retries (timeout, 5xx, overload). Don't
-            // dead-end the visitor with a 500: return a graceful canned reply so
-            // they can retry. The user message is already persisted, so the next
-            // turn continues the conversation. The filler is NOT pushed to history,
-            // so the model never sees it.
-            console.error('[ANTHROPIC] chat completion failed:', apiErr.message);
-            alerts.apiError(apiErr, { sessionId, endpoint: '/api/chat', model: config.models.chat });
-            return res.json({
-                message: "Sorry, I lagged for a second there. Mind sending that again?",
-                quickReplies: [],
-                leadData: session.leadData,
-                sessionId,
-            });
+        for (let call = 0; call < MAX_CHAT_CALLS; call++) {
+            claudeBudget.count++; // counted before the call: a failed call still spent a request
+            try {
+                response = await anthropic.messages.create({
+                    model: config.models.chat,
+                    // Headroom for thinking; reply length is governed by the system
+                    // prompt's sentence/word caps, not by this ceiling.
+                    max_tokens: 2000,
+                    output_config: { effort: config.modelEffort.chat },
+                    system: [
+                        { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+                        { type: 'text', text: dynamicSystemBlock }
+                    ],
+                    messages: turnMessages,
+                    tools: gatedTools,
+                    tool_choice: { type: 'auto' }
+                });
+            } catch (apiErr) {
+                console.error('[ANTHROPIC] chat completion failed:', apiErr.message);
+                alerts.apiError(apiErr, { sessionId, endpoint: '/api/chat', model: config.models.chat });
+                // A follow-up call failed but an earlier one already returned tool
+                // calls: keep those (lead capture, booking) and let the
+                // empty-response guard below supply the text.
+                if (responseBlocks.length > 0) break;
+                // Model call failed after retries (timeout, 5xx, overload). Don't
+                // dead-end the visitor with a 500: return a graceful canned reply so
+                // they can retry. The user message is already persisted, so the next
+                // turn continues the conversation. The filler is NOT pushed to history,
+                // so the model never sees it.
+                return res.json({
+                    message: "Sorry, I lagged for a second there. Mind sending that again?",
+                    quickReplies: [],
+                    leadData: session.leadData,
+                    sessionId,
+                });
+            }
+
+            responseBlocks.push(...response.content);
+            for (const k of Object.keys(usage)) usage[k] += response.usage?.[k] || 0;
+
+            const hasText = responseBlocks.some(b => b.type === 'text' && b.text.trim());
+            if (response.stop_reason !== 'tool_use' || hasText) break;
+
+            // Thinking blocks go back unchanged with the rest of the assistant turn.
+            turnMessages.push(
+                { role: 'assistant', content: response.content },
+                {
+                    role: 'user',
+                    content: response.content
+                        .filter(b => b.type === 'tool_use')
+                        .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: TOOL_ACKS[b.name] || 'Done.' }))
+                }
+            );
         }
 
         // Record token usage + latency for cost observability (fire-and-forget).
+        // Summed across every call made for this turn.
         try {
-            const u = response.usage || {};
             db.logChatMetric({
                 conversationId: sessionId,
                 model: config.models.chat,
-                inputTokens: u.input_tokens || 0,
-                outputTokens: u.output_tokens || 0,
-                cacheReadTokens: u.cache_read_input_tokens || 0,
-                cacheCreationTokens: u.cache_creation_input_tokens || 0,
+                inputTokens: usage.input_tokens,
+                outputTokens: usage.output_tokens,
+                cacheReadTokens: usage.cache_read_input_tokens,
+                cacheCreationTokens: usage.cache_creation_input_tokens,
                 latencyMs: Date.now() - chatStartTime
             });
         } catch (err) {
             console.error('Error logging chat metric:', err.message);
+        }
+
+        // A safety-classifier decline (HTTP 200, empty content) or a reply cut off
+        // by max_tokens both fall through to the empty-response guard below; log
+        // them so they are visible instead of looking like a quiet model.
+        if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') {
+            console.warn(`[CHAT STOP] stop_reason=${response.stop_reason}`, {
+                sessionId, category: response.stop_details?.category || null
+            });
         }
 
         // Process response: extract text and tool calls
@@ -719,7 +769,7 @@ app.post('/api/chat', requireKnownOrigin, dailyChatLimiter, chatLimiter, async (
         let showBookingCalendar = false;
 
         const userMsgIndex = session.messages.filter(m => m.role === 'user').length;
-        for (const block of response.content) {
+        for (const block of responseBlocks) {
             if (block.type === 'text') {
                 // Append rather than overwrite: a response may carry more than one
                 // text block (e.g. text interleaved with tool_use).
@@ -1087,12 +1137,14 @@ async function summarizeMessages(messages, anthropicClient, priorSummary = null)
 
         const response = await anthropicClient.messages.create({
             model: config.models.summarizer,
-            max_tokens: 150,
+            max_tokens: 1024,
+            output_config: { effort: config.modelEffort.summarizer },
             system: 'Summarize this chat transcript in 2-3 sentences. Note: visitor business type, pain points, contact info shared, and interest level. If an earlier summary is provided, merge it with the newer messages into one concise summary. Be concise.',
             messages: [{ role: 'user', content: userContent }]
         });
 
-        return response.content[0].text;
+        // Read by block type: the response can open with a thinking block.
+        return response.content.find(b => b.type === 'text')?.text || null;
     } catch (err) {
         console.error('Summarization failed:', err.message);
         return null;

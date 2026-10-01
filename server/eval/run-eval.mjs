@@ -27,18 +27,18 @@ const API_KEY = (env.match(/^ANTHROPIC_API_KEY=(.+)$/m) || [])[1]?.trim();
 if (!API_KEY) { console.error('No ANTHROPIC_API_KEY in server/.env'); process.exit(1); }
 
 const RUNTAG = process.env.RUNTAG || String(Date.now());
-const VISITOR_MODEL = 'claude-haiku-4-5';
-const JUDGE_MODEL = 'claude-sonnet-4-6';
+const VISITOR_MODEL = 'claude-sonnet-5-5';
+const JUDGE_MODEL = 'claude-sonnet-5-5';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function anthropic(model, system, messages, max_tokens = 300) {
+async function anthropic(model, system, messages, max_tokens = 1024, effort = 'low') {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens, system, messages })
+        body: JSON.stringify({ model, max_tokens, output_config: { effort }, system, messages })
       });
       if (r.status === 429 || r.status >= 500) { await sleep(2000 * (attempt + 1)); continue; }
       const j = await r.json();
@@ -96,11 +96,21 @@ const SCENARIOS = [
 ];
 
 async function chat(sessionId, message, page) {
-  const r = await fetch(BASE + '/api/chat', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId, message, pageContext: page })
-  });
-  return r.json();
+  for (;;) {
+    const r = await fetch(BASE + '/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, message, pageContext: page })
+    });
+    // The per-IP chat limiter (8/min) is tighter than this harness runs. A 429
+    // has no message field, so without this wait it scores as a blank reply.
+    if (r.status === 429) {
+      const reset = Number(r.headers.get('ratelimit-reset')) || 15;
+      if (reset > 90) throw new Error('rate limited for ' + reset + 's');
+      await sleep(reset * 1000 + 500);
+      continue;
+    }
+    return r.json();
+  }
 }
 
 const stripTokens = s => s.replace(/\[BOOK_CALL\]/g, '').replace(/\[QUICK_REPLIES:.*?\]/g, '').trim();
@@ -128,7 +138,7 @@ async function runScenario(sc, idx) {
     }));
     const vSys = `${sc.persona}\n\nYou are chatting with a marketing agency's website chat. Reply as the persona only, no narration. If you are completely done or want to disengage, reply with exactly [END].`;
     let vReply;
-    try { vReply = await anthropic(VISITOR_MODEL, vSys, vMessages, 150); }
+    try { vReply = await anthropic(VISITOR_MODEL, vSys, vMessages, 1024); }
     catch { vReply = '[END]'; }
     if (!vReply || /\[END\]/i.test(vReply)) break;
     visitorMsg = vReply;
@@ -187,7 +197,7 @@ ${convo}
 Score the AGENT only. Return JSON exactly:
 {"soundsHuman":1-5,"followedRules":1-5,"handledIntentCorrectly":true|false,"closeQuality":1-5 or null,"leakedPricing":true|false,"topIssue":"one sentence","bestLine":"one quote or empty"}`;
   try {
-    const out = await anthropic(JUDGE_MODEL, sys, [{ role: 'user', content: prompt }], 400);
+    const out = await anthropic(JUDGE_MODEL, sys, [{ role: 'user', content: prompt }], 2048, 'medium');
     const m = out.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : { parseError: out.slice(0, 200) };
   } catch (e) { return { judgeError: e.message }; }
@@ -210,7 +220,7 @@ async function main() {
   console.log('Booting server on', PORT, 'against', EVAL_DB, '...');
   const srv = spawn('node', ['server.js'], {
     cwd: SERVER_DIR,
-    env: { ...process.env, PORT: String(PORT), DATABASE_PATH: EVAL_DB, NODE_ENV: 'development' },
+    env: { ...process.env, PORT: String(PORT), DATABASE_PATH: EVAL_DB, NODE_ENV: 'development', DAILY_IP_MAX: '100000' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let serverLog = '';

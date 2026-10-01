@@ -186,7 +186,7 @@ async function sendEmail(followUp) {
  * Use Claude to generate personalized email content for the 3-email sequence
  */
 async function generateEmailContent(conversation, messages) {
-    const anthropic = new Anthropic({ apiKey: config.anthropicApiKey, timeout: 20000, maxRetries: 2 });
+    const anthropic = new Anthropic({ apiKey: config.anthropicApiKey, timeout: 45000, maxRetries: 2 });
 
     // Build conversation transcript for context
     const transcript = messages
@@ -235,11 +235,13 @@ Respond in this exact JSON format:
     try {
         const response = await anthropic.messages.create({
             model: config.models.followUp,
-            max_tokens: 2000,
+            max_tokens: 6000,
+            output_config: { effort: config.modelEffort.followUp },
             messages: [{ role: 'user', content: prompt }],
         });
 
-        const text = response.content[0].text;
+        // Read by block type: the response can open with a thinking block.
+        const text = response.content.find(b => b.type === 'text')?.text || '';
 
         // Extract JSON from response (handle markdown code blocks)
         const jsonMatch = text.match(/\[[\s\S]*\]/);

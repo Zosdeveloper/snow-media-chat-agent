@@ -27,16 +27,29 @@ const config = {
     // /api/health/model self-test read these to verify each model is still live.
     // Override per role via env (e.g. CHAT_MODEL=...) with no code change.
     models: {
-        chat:       process.env.CHAT_MODEL       || 'claude-sonnet-4-6',
-        summarizer: process.env.SUMMARIZER_MODEL || 'claude-haiku-4-5',
-        followUp:   process.env.FOLLOWUP_MODEL   || 'claude-sonnet-4-6',
-        classifier: process.env.CLASSIFIER_MODEL || 'claude-haiku-4-5',
+        chat:       process.env.CHAT_MODEL       || 'claude-sonnet-5-5',
+        summarizer: process.env.SUMMARIZER_MODEL || 'claude-sonnet-5-5',
+        followUp:   process.env.FOLLOWUP_MODEL   || 'claude-sonnet-5-5',
+        classifier: process.env.CLASSIFIER_MODEL || 'claude-sonnet-5-5',
+    },
+
+    // Sonnet 5.5 always thinks (it cannot be disabled), and thinking tokens count
+    // against max_tokens. Effort is the cost/latency dial: 'low' skips thinking on
+    // most simple requests. Every call site passes this as output_config.effort
+    // and sizes max_tokens with headroom for thinking on top of the reply.
+    modelEffort: {
+        chat:       process.env.CHAT_EFFORT       || 'low',
+        summarizer: process.env.SUMMARIZER_EFFORT || 'low',
+        followUp:   process.env.FOLLOWUP_EFFORT   || 'low',
+        classifier: process.env.CLASSIFIER_EFFORT || 'low',
     },
 
     // Published per-million-token pricing, used only to estimate dashboard cost.
     // Update here when Anthropic pricing changes. cacheRead ~= 0.1x input,
-    // cacheWrite (5-min ephemeral) ~= 1.25x input.
+    // cacheWrite (5-min ephemeral) ~= 1.25x input. Entries for models no longer
+    // in use stay so historical chat_metrics rows still price correctly.
     modelPricing: {
+        'claude-sonnet-5-5': { input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50 },
         'claude-sonnet-4-6': { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 },
         'claude-haiku-4-5':  { input: 1.00, output: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 },
     },
